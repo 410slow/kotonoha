@@ -10,9 +10,34 @@ export interface MasteryRecord {
   lastReviewedAt: string | null
 }
 
+export type HomeworkProblemType = 'typing' | 'dictation' | 'choice'
+
+export interface HomeworkProblem {
+  id: string
+  type: HomeworkProblemType
+  prompt: string
+  answer: string
+  answerKanji?: string
+  acceptedAnswers?: string[]
+  audio?: string
+  choices?: string[]
+  hint?: string
+  source?: 'lesson' | 'mistake' | 'kana'
+}
+
 export interface Homework {
   title: string
   tasks: string[]
+  createdAt: string
+  problems?: HomeworkProblem[]
+}
+
+export interface WrongAnswer {
+  id: string
+  prompt: string
+  submitted: string
+  answer: string
+  category: 'typing' | 'dictation' | 'choice'
   createdAt: string
 }
 
@@ -45,6 +70,9 @@ export interface Learner {
   hiraganaPassCount: number
   katakanaPassCount: number
   latestFeedback: TeacherFeedback | null
+  wrongAnswers: WrongAnswer[]
+  lessonDay: number
+  katakanaAdvanceChoice: 'continue' | 'move-on' | null
 }
 
 export interface Lesson {

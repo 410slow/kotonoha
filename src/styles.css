@@ -135,3 +135,230 @@
 .preview-toggle.active small{color:#ffe5e1}
 .shell aside{overflow-y:auto}
 .logout{margin-top:18px}
+
+.lesson-home{display:grid;gap:18px}
+.lesson-home-hero{display:grid;grid-template-columns:1.5fr .75fr;gap:20px;background:linear-gradient(135deg,#171717,#292724);color:#fff;border-radius:28px;padding:36px;min-height:300px;align-items:center}
+.lesson-home-hero h1{font-size:38px;margin:7px 0}.lesson-home-hero>div>p:not(.eyebrow){color:#ccc;font-size:16px}
+.lesson-start-button{margin-top:18px;padding:15px 24px}
+.teacher-profile{background:#ffffff0c;border:1px solid #ffffff18;border-radius:21px;padding:22px;text-align:center}
+.teacher-face{width:72px;height:72px;margin:auto;border-radius:22px;background:#e84a3c;color:#fff;display:grid;place-items:center;font-size:15px;font-weight:900}
+.teacher-face.large{width:94px;height:94px;margin:0;font-size:18px}.teacher-profile span,.teacher-profile strong{display:block}.teacher-profile span{font-size:11px;color:#aaa;margin-top:13px}.teacher-profile strong{font-size:19px;margin-top:3px}.teacher-profile p{color:#ccc;font-size:12px;line-height:1.6}
+.today-goals{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.today-goals>div{background:#fff;border:1px solid #e5e0d8;border-radius:17px;padding:18px}.today-goals span,.today-goals strong{display:block}.today-goals span{font-size:11px;color:#777}.today-goals strong{font-size:23px;margin-top:6px}
+.plan-flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.plan-flow>div{background:#f8f5ef;border-radius:14px;padding:15px}.plan-flow b,.plan-flow strong,.plan-flow span{display:block}.plan-flow b{color:#e84a3c;font-size:11px}.plan-flow strong{margin-top:8px}.plan-flow span{font-size:11px;color:#777;margin-top:5px;line-height:1.5}
+.home-bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.mini-wrong{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;padding:10px 0;border-bottom:1px solid #eee}.mini-wrong span{color:#c6463b}.mini-wrong strong{text-align:right}
+.private-lesson-screen{max-width:900px;margin:auto}.teacher-dialog-card{display:grid;grid-template-columns:auto 1fr;gap:24px;background:#171717;color:#fff;border-radius:28px;padding:38px;align-items:center}.teacher-dialog-card h1{font-size:34px;margin:8px 0}.teacher-dialog-card p:not(.eyebrow){color:#ccc;line-height:1.8}
+.lesson-teaching-card{text-align:center}.lesson-teaching-card>h1{font-size:46px}.sentence-breakdown{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:25px 0}.sentence-breakdown div{background:#f8f5ef;border-radius:14px;padding:17px}.sentence-breakdown strong,.sentence-breakdown span{display:block}.sentence-breakdown strong{font-size:20px}.sentence-breakdown span{font-size:11px;color:#777;margin-top:5px}.teacher-tip{text-align:left;background:#fff5e8;border-radius:14px;padding:17px;margin:20px 0}.teacher-tip p{margin-bottom:0;color:#777}
+.input-question-card{max-width:760px;margin:auto}.question-header{margin-bottom:25px}.question-meter{height:8px;background:#eee8df;border-radius:999px;overflow:hidden}.question-meter i{display:block;height:100%;background:#e84a3c}
+.japanese-input{width:100%;border:2px solid #ddd6cc;border-radius:15px;padding:18px;font-size:24px;margin:18px 0;outline:none}.japanese-input:focus{border-color:#111}.japanese-input.correct{border-color:#1f8b5c}.japanese-input.wrong{border-color:#e84a3c}
+.audio-play-big{border:0;background:#111;color:#fff;border-radius:14px;padding:16px 22px;font-weight:900;margin:12px 0}
+.gentle-feedback{border-radius:14px;padding:16px;margin:12px 0}.gentle-feedback strong,.gentle-feedback span,.gentle-feedback small{display:block}.gentle-feedback.correct{background:#edf8f2;color:#176843}.gentle-feedback.wrong{background:#fff1ee;color:#a9342c}.gentle-feedback span{margin-top:7px}.gentle-feedback small{margin-top:8px}
+.answer-diff{font-size:30px;letter-spacing:3px;margin-top:12px}.answer-diff span.different{color:#e84a3c;text-decoration:underline;font-weight:900}
+.hint-box{background:#fff7e8;border-radius:12px;padding:14px;color:#7e6436}.question-actions{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+.result-score{font-size:70px;font-weight:900;color:#e84a3c}.lesson-result,.homework-result{text-align:center}.lesson-result .secondary{display:block;margin:10px auto}
+.wrong-answer-list{display:grid;gap:12px}.wrong-answer-list article>small{color:#e84a3c;font-weight:900}.wrong-comparison{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center;margin:15px 0}.wrong-comparison>div{background:#f8f5ef;border-radius:12px;padding:14px}.wrong-comparison span,.wrong-comparison strong{display:block}.wrong-comparison span{font-size:10px;color:#777}.wrong-comparison strong{margin-top:5px}.wrong-comparison>div:first-child strong{color:#c6463b}
+.empty-note,.empty-homework{text-align:center;padding:50px}.homework-choices{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:20px 0}.homework-choices button{border:1px solid #ddd6cc;background:#fff;border-radius:13px;padding:16px;text-align:left}.homework-choices button.selected{background:#111;color:#fff;border-color:#111}
+@media(max-width:850px){
+  .lesson-home-hero,.teacher-dialog-card{grid-template-columns:1fr}.today-goals{grid-template-columns:repeat(2,1fr)}.plan-flow{grid-template-columns:1fr}.home-bottom-grid{grid-template-columns:1fr}.sentence-breakdown{grid-template-columns:repeat(2,1fr)}.homework-choices{grid-template-columns:1fr}
+}
+
+/* v0.9.1 초급 정답 표시 */
+.answer-diff span{display:inline}
+.beginner-answer,.submitted-answer{
+  margin-top:14px;
+  padding:14px 16px;
+  border-radius:12px;
+  background:rgba(255,255,255,.62);
+}
+.answer-label{
+  display:block!important;
+  margin-bottom:8px;
+  font-size:11px;
+  font-weight:900;
+  opacity:.7;
+}
+.beginner-answer b,.submitted-answer b{
+  display:block;
+  font-size:24px;
+  line-height:1.5;
+  letter-spacing:.02em;
+}
+.kanji-answer{
+  display:block!important;
+  margin-top:5px;
+  font-size:18px;
+  line-height:1.5;
+  opacity:.78;
+}
+
+/* v0.9.2 적응형 숙제 */
+.homework-source{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:6px 11px;
+  margin-bottom:12px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:900;
+}
+.homework-source.lesson{background:#f4eee6;color:#7a6652}
+.homework-source.mistake{background:#fff0ed;color:#bd3f35}
+.homework-source.kana{background:#eef3ff;color:#47649d}
+.teacher-homework-comment{
+  display:flex;
+  gap:14px;
+  align-items:center;
+  max-width:520px;
+  margin:24px auto 0;
+  padding:16px;
+  border-radius:16px;
+  background:#f8f5ef;
+  text-align:left;
+}
+.teacher-face.small{width:52px;height:52px;border-radius:16px;flex:0 0 auto;font-size:12px}
+.teacher-homework-comment p{margin:5px 0 0;color:#666;line-height:1.6}
+
+/* v0.9.3 문자 과정 분기 */
+.kana-gate-card{
+  padding:28px;
+  border-left:5px solid #ef493d;
+}
+.kana-gate-card b{color:#ef493d}
+.katakana-choice-card{
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:18px;
+  align-items:start;
+  margin-bottom:16px;
+  border:2px solid #ef493d22;
+}
+.katakana-choice-copy h3{margin:4px 0 8px}
+.katakana-choice-copy>p:not(.eyebrow){color:#666;line-height:1.7}
+.katakana-choice-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:16px;
+}
+.choice-confirmed{
+  margin-top:14px;
+  padding:12px 14px;
+  border-radius:12px;
+  background:#edf8f2;
+  color:#176843;
+  font-weight:800;
+}
+@media(max-width:700px){
+  .katakana-choice-card{grid-template-columns:1fr}
+  .katakana-choice-actions{display:grid}
+}
+
+/* v0.9.4 자연스러운 일본어 음성 */
+.voice-settings{
+  margin:0 0 16px;
+  padding:13px;
+  border:1px solid #343434;
+  border-radius:12px;
+  background:#191919;
+}
+.voice-settings-title{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  margin-bottom:10px;
+}
+.voice-settings-title span{
+  color:#fff;
+  font-size:12px;
+  font-weight:900;
+}
+.voice-settings-title button{
+  border:0;
+  background:transparent;
+  color:#ff8c82;
+  font-size:10px;
+  font-weight:900;
+  cursor:pointer;
+}
+.voice-settings select{
+  width:100%;
+  min-width:0;
+  padding:9px 10px;
+  border:1px solid #3d3d3d;
+  border-radius:9px;
+  background:#242424;
+  color:#ddd;
+  font-size:11px;
+}
+.voice-speed-options{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:5px;
+  margin-top:8px;
+}
+.voice-speed-options button{
+  border:1px solid #3d3d3d;
+  border-radius:8px;
+  padding:7px 4px;
+  background:#242424;
+  color:#999;
+  font-size:9px;
+  cursor:pointer;
+}
+.voice-speed-options button.active{
+  border-color:#e84a3c;
+  background:#e84a3c;
+  color:#fff;
+}
+
+/* v0.9.5 실전 회화 */
+.conversation-page{max-width:900px;margin:auto}
+.conversation-progress{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-size:12px;font-weight:900}
+.conversation-progress b{color:#e84a3c}
+.conversation-chat{display:grid;gap:24px;padding:28px}
+.teacher-message{display:grid;grid-template-columns:auto 1fr;gap:15px;align-items:start}
+.teacher-message>div:last-child{max-width:680px;padding:18px;border-radius:4px 18px 18px 18px;background:#f6f2eb}
+.teacher-message span{font-size:11px;color:#777;font-weight:900}
+.japanese-dialogue{margin:8px 0 4px;font-size:24px;font-weight:800;line-height:1.6}
+.teacher-message small{display:block;color:#777}
+.dialogue-audio{margin-top:12px;border:0;border-radius:999px;padding:8px 12px;background:#111;color:#fff;font-size:11px;font-weight:900;cursor:pointer}
+.dialogue-audio.retry{background:#a9342c}
+.student-response{margin-left:70px;padding:22px;border:1px solid #e5e0d8;border-radius:18px 4px 18px 18px;background:#fff}
+.student-response>p{margin:0;font-size:15px;font-weight:800}
+.conversation-result{padding:46px;text-align:center}
+.conversation-result .teacher-face{margin:0 auto 18px}
+.conversation-summary{width:150px;margin:24px auto 0;padding:18px;border-radius:18px;background:#f8f5ef}
+.conversation-summary strong,.conversation-summary span{display:block}
+.conversation-summary strong{font-size:34px;color:#e84a3c}
+.conversation-summary span{margin-top:4px;font-size:11px;color:#777}
+.conversation-home-card{border-top:4px solid #e84a3c}
+@media(max-width:700px){
+  .student-response{margin-left:0}
+  .teacher-message{grid-template-columns:1fr}
+  .japanese-dialogue{font-size:20px}
+}
+
+/* v0.9.6 레슨 완료 버튼 및 게이지 수정 */
+.lesson-question-actions{
+  position:sticky;
+  bottom:12px;
+  z-index:20;
+  margin-top:22px;
+  padding:12px;
+  border:1px solid #e8e1d8;
+  border-radius:15px;
+  background:rgba(255,255,255,.96);
+  box-shadow:0 10px 30px rgba(0,0,0,.09);
+  backdrop-filter:blur(10px);
+}
+.lesson-next-button{
+  min-width:130px;
+}
+.lesson-next-button:disabled{
+  cursor:wait;
+  opacity:.7;
+}
+.question-meter i{
+  transition:width .35s ease;
+}

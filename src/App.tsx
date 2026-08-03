@@ -4,9 +4,9 @@ import { hiragana, katakana, lessons } from './data/curriculum'
 import { placementQuestions } from './data/placement'
 import { auth } from './lib/firebase'
 import { readLearner, saveLearner } from './lib/storage'
-import type { Learner, LevelName, MasteryRecord } from './types'
+import type { HomeworkProblem, Learner, LevelName, MasteryRecord, WrongAnswer } from './types'
 
-type View = 'home' | 'course' | 'kana' | 'homework' | 'review' | 'video'
+type View = 'home' | 'today' | 'conversation' | 'course' | 'kana' | 'homework' | 'review' | 'video'
 type KanaType = 'hiragana' | 'katakana'
 type KanaPair = readonly [string, string]
 
@@ -36,7 +36,7 @@ function createLearner(uid:string,name:string):Learner{
     id:uid,name,level:'미진단',placementDone:false,placementScore:0,
     hiraPassed:false,kataPassed:false,completedLessons:[],homework:null,
     streak:0,lastStudyDate:null,hiraganaMastery:emptyMastery(hiragana),
-    katakanaMastery:emptyMastery(katakana),hiraganaPassCount:0,katakanaPassCount:0,latestFeedback:null
+    katakanaMastery:emptyMastery(katakana),hiraganaPassCount:0,katakanaPassCount:0,latestFeedback:null,wrongAnswers:[],lessonDay:1,katakanaAdvanceChoice:null
   }
 }
 function hydrateLearner(raw:Learner):Learner{
@@ -48,6 +48,9 @@ function hydrateLearner(raw:Learner):Learner{
     hiraganaPassCount:raw.hiraganaPassCount||0,
     katakanaPassCount:raw.katakanaPassCount||0,
     latestFeedback:raw.latestFeedback||null,
+    wrongAnswers:raw.wrongAnswers||[],
+    lessonDay:raw.lessonDay||1,
+    katakanaAdvanceChoice:raw.katakanaAdvanceChoice||null,
   }
 }
 function today(){ return new Date().toISOString().slice(0,10) }
@@ -61,10 +64,160 @@ function touched(learner:Learner):Learner{
   }
   return {...learner,lastStudyDate:date,streak}
 }
-function speak(text:string){
+type VoiceSpeed = 'slow' | 'normal' | 'natural'
+
+const VOICE_NAME_KEY='kotonoha.voiceName'
+const VOICE_SPEED_KEY='kotonoha.voiceSpeed'
+
+function japaneseVoices(){
+  if(!('speechSynthesis' in window))return []
+  return window.speechSynthesis.getVoices().filter(voice=>
+    voice.lang.toLowerCase().startsWith('ja')
+  )
+}
+
+function preferredJapaneseVoice(){
+  const voices=japaneseVoices()
+  const saved=localStorage.getItem(VOICE_NAME_KEY)
+  if(saved){
+    const selected=voices.find(voice=>voice.name===saved)
+    if(selected)return selected
+  }
+
+  const preferredNames=[
+    'Kyoko','Otoya','Hattori','Nanami',
+    'Google 日本語','Microsoft Nanami',
+    'Japanese Japan'
+  ]
+
+  return preferredNames
+    .map(name=>voices.find(voice=>voice.name.includes(name)))
+    .find(Boolean) || voices.find(voice=>voice.localService) || voices[0]
+}
+
+function currentVoiceSpeed():VoiceSpeed{
+  const saved=localStorage.getItem(VOICE_SPEED_KEY)
+  return saved==='slow'||saved==='normal'||saved==='natural'?saved:'natural'
+}
+
+function speak(text:string,kind:'character'|'sentence'='sentence'){
   if(!('speechSynthesis' in window))return
-  const u=new SpeechSynthesisUtterance(text);u.lang='ja-JP';u.rate=.78
-  speechSynthesis.cancel();speechSynthesis.speak(u)
+
+  const clean=text.replace(/\s+/g,'').trim()
+  const utterance=new SpeechSynthesisUtterance(text)
+  const voice=preferredJapaneseVoice()
+  const speed=currentVoiceSpeed()
+
+  utterance.lang='ja-JP'
+  if(voice)utterance.voice=voice
+
+  const isShort=kind==='character'||Array.from(clean).length<=2
+  if(isShort){
+    utterance.rate=.68
+    utterance.pitch=1
+  }else{
+    utterance.rate=speed==='slow'?.72:speed==='normal'?.86:.96
+    utterance.pitch=.98
+  }
+
+  utterance.volume=1
+  window.speechSynthesis.cancel()
+  window.speechSynthesis.speak(utterance)
+}
+
+function teacherCorrectionMessage(input:string,answer:string){
+  const typed=normalizeJapanese(input)
+  const correct=normalizeJapanese(answer)
+
+  if(!typed)return '괜찮아요. 정답을 보면서 천천히 다시 입력해볼까요?'
+  if(correct.startsWith(typed))return '아주 좋아요. 앞부분은 정확해요. 뒤에 빠진 표현만 이어서 확인해볼까요?'
+  if(typed.length>=correct.length-2)return '거의 완성했어요. 한두 글자만 다시 확인하면 됩니다.'
+  return '좋은 시도예요. 히라가나 정답을 먼저 읽고 다시 한번 입력해볼까요?'
+}
+
+function JapaneseVoiceSettings(){
+  const [voices,setVoices]=useState<SpeechSynthesisVoice[]>([])
+  const [voiceName,setVoiceName]=useState(localStorage.getItem(VOICE_NAME_KEY)||'')
+  const [speed,setSpeed]=useState<VoiceSpeed>(currentVoiceSpeed())
+
+  useEffect(()=>{
+    if(!('speechSynthesis' in window))return
+
+    const load=()=>{
+      const list=japaneseVoices()
+      setVoices(list)
+
+      if(!voiceName&&list.length){
+        const preferred=preferredJapaneseVoice()
+        if(preferred){
+          setVoiceName(preferred.name)
+          localStorage.setItem(VOICE_NAME_KEY,preferred.name)
+        }
+      }
+    }
+
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged',load)
+    return ()=>window.speechSynthesis.removeEventListener('voiceschanged',load)
+  },[voiceName])
+
+  const selectVoice=(name:string)=>{
+    setVoiceName(name)
+    localStorage.setItem(VOICE_NAME_KEY,name)
+  }
+
+  const selectSpeed=(value:VoiceSpeed)=>{
+    setSpeed(value)
+    localStorage.setItem(VOICE_SPEED_KEY,value)
+  }
+
+  return <div className="voice-settings">
+    <div className="voice-settings-title">
+      <span>일본어 음성</span>
+      <button type="button" onClick={()=>speak('今日も一緒に頑張りましょう。')}>미리 듣기</button>
+    </div>
+
+    <select value={voiceName} onChange={event=>selectVoice(event.target.value)}>
+      {voices.length
+        ? voices.map(voice=><option value={voice.name} key={voice.name}>{voice.name}</option>)
+        : <option value="">일본어 음성 불러오는 중</option>}
+    </select>
+
+    <div className="voice-speed-options">
+      {([
+        ['slow','천천히'],
+        ['normal','보통'],
+        ['natural','자연스럽게']
+      ] as [VoiceSpeed,string][]).map(([value,label])=>
+        <button
+          type="button"
+          className={speed===value?'active':''}
+          onClick={()=>selectSpeed(value)}
+          key={value}
+        >{label}</button>
+      )}
+    </div>
+  </div>
+}
+
+function normalizeJapanese(value:string){
+  return value
+    .normalize('NFKC')
+    .replace(/[\s　]/g,'')
+    .replace(/[。．.！!？?、,]/g,'')
+    .trim()
+}
+function isJapaneseAnswerCorrect(input:string,answer:string|string[]){
+  const answers=Array.isArray(answer)?answer:[answer]
+  return answers.some(item=>normalizeJapanese(input)===normalizeJapanese(item))
+}
+function answerSegments(input:string,answer:string){
+  const typed=normalizeJapanese(input)
+  const correct=normalizeJapanese(answer)
+  return Array.from(correct).map((char,index)=>({
+    char,
+    correct:typed[index]===char
+  }))
 }
 
 export default function App(){
@@ -138,7 +291,7 @@ export default function App(){
     const lesson=lessons.find(x=>x.id===id)
     if(!lesson?.lockedBy)return true
     if(lesson.lockedBy==='hiragana')return active.hiraPassed
-    if(lesson.lockedBy==='katakana')return active.kataPassed
+    if(lesson.lockedBy==='katakana')return active.kataPassed||active.katakanaAdvanceChoice==='move-on'
     return active.completedLessons.includes(lesson.lockedBy)
   }
 
@@ -185,15 +338,18 @@ export default function App(){
         <small>{previewMode?'모든 단원 자유 확인 중':'눌러서 모든 수업 확인'}</small>
       </button>
 
-      <nav>{(['home','course','kana','review','homework','video'] as View[]).map(v=>
+      <JapaneseVoiceSettings/>
+
+      <nav>{(['home','today','conversation','course','kana','homework','review','video'] as View[]).map(v=>
         <button className={view===v?'active':''} onClick={()=>setView(v)} key={v}>
-          {{home:'오늘의 학습',course:'전체 과정',kana:'문자 마스터',review:'취약 문자',homework:'숙제',video:'영상 학습'}[v]}
+          {{home:'오늘의 홈',today:'오늘의 레슨',conversation:'실전 회화',course:'전체 과정',kana:'문자 마스터',homework:'숙제 문제',review:'오답노트',video:'영상 학습'}[v]}
         </button>)}</nav>
       <button className="logout" onClick={()=>signOut(auth)}>로그아웃</button>
     </aside>
     <main>
       <header><div><p className="eyebrow">PRIVATE STUDY</p><h2>{active.level}</h2></div><span className="pill">SYNC</span></header>
-      {view==='home'&&<Home learner={active} setView={setView}/>}
+      {view==='home'&&<Home learner={active} setView={setView}/>}      {view==='today'&&<TodayLesson learner={active} persist={persist} setView={setView}/>}
+      {view==='conversation'&&<ConversationPractice learner={active} persist={persist}/>} 
       {view==='course'&&<Course learner={active} unlocked={unlocked} setView={setView}/>}
       {view==='kana'&&<KanaTrainer learner={active} persist={persist} previewMode={previewMode}/>}
       {view==='review'&&<Review learner={active} persist={persist}/>}
@@ -208,110 +364,74 @@ function Centered({children}:{children:React.ReactNode}){
 }
 function Home({learner,setView}:{learner:Learner,setView:(v:View)=>void}){
   const hiraAvg=averageMastery(learner.hiraganaMastery)
-  const kataAvg=averageMastery(learner.katakanaMastery)
-  const weakChars=Object.entries(learner.hiraganaMastery)
-    .sort((a,b)=>a[1].mastery-b[1].mastery)
-    .slice(0,5)
-    .map(([char])=>char)
+  const homeworkCount=learner.homework?.problems?.length||0
+  const recentWrong=learner.wrongAnswers.slice(-3).reverse()
 
-  const nextTitle=learner.homework
-    ? '지난 숙제 확인'
-    : !learner.hiraPassed
-      ? '히라가나 이어서 학습'
-      : !learner.kataPassed
-        ? '가타카나 이어서 학습'
-        : '다음 문법 수업'
-
-  const nextView:View=learner.homework
-    ? 'homework'
-    : (!learner.hiraPassed || !learner.kataPassed)
-      ? 'kana'
-      : 'course'
-
-  return <div className="dashboard">
-    <section className="welcome-panel">
+  return <div className="lesson-home">
+    <section className="lesson-home-hero">
       <div>
-        <p className="eyebrow">TODAY'S STUDY</p>
+        <p className="eyebrow">PRIVATE LESSON · DAY {learner.lessonDay}</p>
         <h1>안녕하세요, {learner.name}님.</h1>
-        <p>오늘도 20분만 정확하게 공부해볼까요?</p>
-      </div>
-      <div className="streak-badge">
-        <span>연속 학습</span>
-        <strong>{learner.streak}일</strong>
-      </div>
-    </section>
-
-    <section className="today-card">
-      <div className="today-copy">
-        <span className="today-label">오늘의 학습</span>
-        <h2>{nextTitle}</h2>
-        <p>{learner.homework
-          ? '새로운 수업 전에 지난 숙제를 먼저 확인합니다.'
-          : '현재 단계에 맞는 학습을 이어서 진행합니다.'}</p>
-        <button className="primary large-button" onClick={()=>setView(nextView)}>
-          이어서 공부하기
+        <p>매일 20분, AI 담임과 함께하는 일본어 레슨</p>
+        <button className="primary lesson-start-button" onClick={()=>setView(learner.homework?'homework':'today')}>
+          {learner.homework?'숙제부터 시작':'오늘의 레슨 시작'}
         </button>
       </div>
-      <div className="today-progress">
-        <div className="progress-circle" style={{'--progress':`${hiraAvg}%`} as React.CSSProperties}>
-          <div><strong>{hiraAvg}%</strong><span>히라가나</span></div>
-        </div>
+      <div className="teacher-profile">
+        <div className="teacher-face">さとう</div>
+        <span>담임 선생님</span>
+        <strong>사토 선생님</strong>
+        <p>{learner.latestFeedback?.summary||'오늘도 서두르지 않고 정확하게 연습해봐요.'}</p>
       </div>
     </section>
 
-    <div className="quick-grid">
-      <button className="quick-card" onClick={()=>setView('homework')}>
-        <span className="quick-icon">✓</span>
-        <div><small>숙제</small><strong>{learner.homework?'확인 필요':'완료'}</strong></div>
-      </button>
-      <button className="quick-card" onClick={()=>setView('review')}>
-        <span className="quick-icon">復</span>
-        <div><small>취약 문자</small><strong>{weakChars.join('・')}</strong></div>
-      </button>
-      <button className="quick-card" onClick={()=>setView('kana')}>
-        <span className="quick-icon">あ</span>
-        <div><small>문자 학습</small><strong>{learner.hiraPassed?'가타카나':'히라가나'}</strong></div>
-      </button>
-      <button className="quick-card" onClick={()=>setView('course')}>
-        <span className="quick-icon">学</span>
-        <div><small>전체 과정</small><strong>{learner.completedLessons.length}개 완료</strong></div>
-      </button>
+    <div className="today-goals">
+      <div><span>오늘 학습</span><strong>20분</strong></div>
+      <div><span>연속 학습</span><strong>{learner.streak}일</strong></div>
+      <div><span>히라가나</span><strong>{hiraAvg}%</strong></div>
+      <div><span>숙제 문제</span><strong>{homeworkCount}개</strong></div>
     </div>
 
-    <section className="progress-section">
+    <section className="daily-plan card">
       <div className="section-title-row">
-        <div><p className="eyebrow">PROGRESS</p><h2>현재 학습 진도</h2></div>
-        <span className="level-chip">{learner.level}</span>
+        <div><p className="eyebrow">TODAY'S PLAN</p><h2>오늘의 레슨 순서</h2></div>
+        <span className="level-chip">약 20분</span>
       </div>
-      <div className="progress-list">
-        <div className="progress-item">
-          <div><strong>히라가나</strong><span>{learner.hiraPassed?'마스터 완료':'학습 중'}</span></div>
-          <div className="bar"><i style={{width:`${hiraAvg}%`}}/></div>
-          <b>{hiraAvg}%</b>
-        </div>
-        <div className={`progress-item ${learner.hiraPassed?'':'muted-row'}`}>
-          <div><strong>가타카나</strong><span>{learner.hiraPassed?(learner.kataPassed?'마스터 완료':'학습 중'):'히라가나 완료 후 열림'}</span></div>
-          <div className="bar"><i style={{width:`${kataAvg}%`}}/></div>
-          <b>{kataAvg}%</b>
-        </div>
-        <div className={`progress-item ${learner.kataPassed?'':'muted-row'}`}>
-          <div><strong>기초 문법</strong><span>{learner.kataPassed?'시작 가능':'가타카나 완료 후 열림'}</span></div>
-          <div className="bar"><i style={{width:`${Math.min(100,learner.completedLessons.length*12)}%`}}/></div>
-          <b>{Math.min(100,learner.completedLessons.length*12)}%</b>
-        </div>
+      <div className="plan-flow">
+        {[
+          ['01','담임 인사','오늘 목표 확인'],
+          ['02','문자·단어','발음과 뜻 연결'],
+          ['03','직접 입력','일본어 문장 작성'],
+          ['04','받아쓰기','소리를 듣고 입력'],
+          ['05','피드백','오답과 숙제 생성']
+        ].map(([number,title,desc])=><div key={number}>
+          <b>{number}</b><strong>{title}</strong><span>{desc}</span>
+        </div>)}
       </div>
     </section>
 
-    <section className="teacher-card">
-      <div className="teacher-avatar">先生</div>
-      <div>
-        <p className="eyebrow">담임 메모</p>
-        <h3>{learner.latestFeedback?.title || (weakChars.length?`${weakChars.join('・')} 문자를 먼저 복습해보세요.`:'오늘의 학습을 시작해보세요.')}</h3>
-        <p>{learner.latestFeedback?.summary || '취약 문자는 정답률과 숙련도를 기준으로 자동 추천됩니다.'}</p>
-        {learner.latestFeedback&&<span className="feedback-time">추천 복습 {learner.latestFeedback.recommendedMinutes}분</span>}
-      </div>
-      <button className="secondary" onClick={()=>setView('review')}>복습하기</button>
-    </section>
+    <div className="home-bottom-grid">
+      <section className="card">
+        <p className="eyebrow">RECENT MISTAKES</p>
+        <h2>최근 오답</h2>
+        {recentWrong.length?recentWrong.map(item=><div className="mini-wrong" key={item.id}>
+          <span>{item.submitted||'미입력'}</span><b>→</b><strong>{item.answer}</strong>
+        </div>):<p className="muted">아직 저장된 오답이 없습니다.</p>}
+        <button className="secondary spaced" onClick={()=>setView('review')}>오답노트 보기</button>
+      </section>
+      <section className="card conversation-home-card">
+        <p className="eyebrow">ROLE PLAY</p>
+        <h2>연습실 실전 회화</h2>
+        <p className="muted">사토 선생님의 질문에 일본어로 직접 답해보세요.</p>
+        <button className="secondary spaced" onClick={()=>setView('conversation')}>회화 시작</button>
+      </section>
+      <section className="card">
+        <p className="eyebrow">HOMEWORK</p>
+        <h2>{learner.homework?'오늘 숙제가 있어요.':'숙제 완료'}</h2>
+        <p className="muted">{learner.homework?`${homeworkCount}문제를 풀어야 다음 레슨으로 이동할 수 있습니다.`:'새 레슨을 완료하면 문제형 숙제가 생성됩니다.'}</p>
+        <button className="secondary spaced" disabled={!learner.homework} onClick={()=>setView('homework')}>숙제 풀기</button>
+      </section>
+    </div>
   </div>
 }
 function Stat({label,value}:{label:string,value:string}){return <div className="card"><span>{label}</span><strong>{value}</strong></div>}
@@ -322,6 +442,523 @@ function weakestKana(records:Record<string,MasteryRecord>){
   const weak=Object.entries(records).sort((a,b)=>a[1].mastery-b[1].mastery).slice(0,4).map(([c])=>c)
   return weak.length?`오늘은 ${weak.join('・')}를 먼저 복습하면 좋아요.`:'오늘의 학습을 시작해보세요.'
 }
+
+
+function buildAdaptiveHomework(learner:Learner,lessonWrong:WrongAnswer[]):HomeworkProblem[]{
+  const now=Date.now()
+  const reviewSource=[...lessonWrong,...learner.wrongAnswers.slice(-5)]
+  const seen=new Set<string>()
+  const reviewProblems:HomeworkProblem[]=[]
+
+  reviewSource.reverse().forEach((item,index)=>{
+    const key=normalizeJapanese(item.answer)
+    if(seen.has(key)||reviewProblems.length>=3)return
+    seen.add(key)
+    reviewProblems.push({
+      id:`review-${now}-${index}`,
+      type:item.category==='dictation'?'dictation':'typing',
+      prompt:item.category==='dictation'?'이전에 틀린 문장을 다시 듣고 입력하세요.':`복습 문제: ${item.prompt}`,
+      answer:item.answer,
+      acceptedAnswers:[item.answer],
+      audio:item.category==='dictation'?item.answer:undefined,
+      hint:'이전에 틀렸던 문제입니다. 천천히 다시 입력해보세요.',
+      source:'mistake'
+    })
+  })
+
+  const core:HomeworkProblem[]=[
+    {
+      id:`hw-${now}-1`,
+      type:'typing',
+      prompt:'“저는 연습생입니다.”를 일본어로 입력하세요.',
+      answer:'わたしは れんしゅうせいです',
+      answerKanji:'私は 練習生です',
+      acceptedAnswers:['わたしはれんしゅうせいです','私は練習生です','私はれんしゅうせいです','わたしは練習生です'],
+      hint:'연습생 = れんしゅうせい',
+      source:'lesson'
+    },
+    {
+      id:`hw-${now}-2`,
+      type:'typing',
+      prompt:'“저는 한국인입니다.”를 일본어로 입력하세요.',
+      answer:'わたしは かんこくじんです',
+      answerKanji:'私は 韓国人です',
+      acceptedAnswers:['わたしはかんこくじんです','私は韓国人です','私はかんこくじんです','わたしは韓国人です'],
+      hint:'한국인 = かんこくじん',
+      source:'lesson'
+    },
+    {
+      id:`hw-${now}-3`,
+      type:'dictation',
+      prompt:'소리를 듣고 그대로 입력하세요.',
+      answer:'ありがとうございます',
+      answerKanji:'有難うございます',
+      acceptedAnswers:['ありがとうございます','有難うございます'],
+      audio:'ありがとうございます',
+      hint:'감사합니다.',
+      source:'lesson'
+    },
+    {
+      id:`hw-${now}-4`,
+      type:'dictation',
+      prompt:'소리를 듣고 그대로 입력하세요.',
+      answer:'もういちど おねがいします',
+      answerKanji:'もう一度 お願いします',
+      acceptedAnswers:['もういちどおねがいします','もう一度お願いします','もういちどお願いします'],
+      audio:'もういちどおねがいします',
+      hint:'한 번 더 부탁드립니다.',
+      source:'lesson'
+    },
+    {
+      id:`hw-${now}-5`,
+      type:'choice',
+      prompt:'「せんせい」의 뜻은?',
+      answer:'선생님',
+      choices:['학생','선생님','연습생','회사원'],
+      source:'lesson'
+    }
+  ]
+
+  const katakanaAverage=averageMastery(learner.katakanaMastery)
+  const katakanaReview:HomeworkProblem[]=[]
+
+  if(learner.katakanaAdvanceChoice==='move-on'&&katakanaAverage<100){
+    const weakKatakana=Object.entries(learner.katakanaMastery)
+      .sort((a,b)=>a[1].mastery-b[1].mastery)
+      .slice(0,katakanaAverage<70?5:katakanaAverage<90?3:2)
+
+    weakKatakana.forEach(([char],index)=>{
+      const reading=katakana.find(([kana])=>kana===char)?.[1]||''
+      const distractors=katakana
+        .filter(([kana,value])=>kana!==char&&value!==reading)
+        .map(([,value])=>value)
+        .sort(()=>Math.random()-.5)
+        .slice(0,3)
+
+      katakanaReview.push({
+        id:`kata-review-${now}-${index}`,
+        type:'choice',
+        prompt:`가타카나 「${char}」의 발음은?`,
+        answer:reading,
+        choices:[reading,...distractors].sort(()=>Math.random()-.5),
+        source:'kana'
+      })
+    })
+  }
+
+  return [...reviewProblems,...katakanaReview,...core].slice(0,10)
+}
+
+function TodayLesson({learner,persist,setView}:{learner:Learner,persist:(l:Learner)=>Promise<void>,setView:(v:View)=>void}){
+  type LessonQuestion = {
+    id:string
+    type:'typing'|'dictation'
+    prompt:string
+    answer:string
+    answerKanji?:string
+    acceptedAnswers?:string[]
+    audio?:string
+    hint:string
+  }
+
+  const questions:LessonQuestion[]=[
+    {id:'lesson-typing-1',type:'typing',prompt:'“저는 학생입니다.”를 일본어로 입력하세요.',answer:'わたしは がくせいです',answerKanji:'私は 学生です',acceptedAnswers:['わたしはがくせいです','私は学生です','私はがくせいです','わたしは学生です'],hint:'わたし + は + がくせい + です'},
+    {id:'lesson-typing-2',type:'typing',prompt:'“저는 선생님입니다.”를 일본어로 입력하세요.',answer:'わたしは せんせいです',answerKanji:'私は 先生です',acceptedAnswers:['わたしはせんせいです','私は先生です','私はせんせいです','わたしは先生です'],hint:'학생(がくせい)을 선생님(せんせい)으로 바꿔보세요.'},
+    {id:'lesson-dictation-1',type:'dictation',prompt:'소리를 듣고 일본어로 입력하세요.',answer:'こんにちは',audio:'こんにちは',hint:'こ 로 시작하는 인사입니다.'},
+    {id:'lesson-dictation-2',type:'dictation',prompt:'소리를 듣고 일본어로 입력하세요.',answer:'よろしくおねがいします',audio:'よろしくおねがいします',hint:'처음 만났을 때 “잘 부탁드립니다”라는 표현입니다.'}
+  ]
+
+  const [stage,setStage]=useState<'intro'|'learn'|'questions'|'result'>('intro')
+  const [index,setIndex]=useState(0)
+  const [input,setInput]=useState('')
+  const [feedback,setFeedback]=useState<'idle'|'correct'|'wrong'>('idle')
+  const [hintVisible,setHintVisible]=useState(false)
+  const [wrong,setWrong]=useState<WrongAnswer[]>([])
+  const [score,setScore]=useState(0)
+  const [finishing,setFinishing]=useState(false)
+
+  const current=questions[index]
+
+  const submit=()=>{
+    if(!input.trim())return
+    const correct=isJapaneseAnswerCorrect(input,current.acceptedAnswers||current.answer)
+    setFeedback(correct?'correct':'wrong')
+    if(correct)setScore(value=>value+1)
+    else{
+      setWrong(items=>[...items,{
+        id:`${current.id}-${Date.now()}`,
+        prompt:current.prompt,
+        submitted:input,
+        answer:current.answer,
+        category:current.type,
+        createdAt:new Date().toISOString()
+      }])
+    }
+
+    window.requestAnimationFrame(()=>{
+      document.querySelector('.lesson-question-actions')?.scrollIntoView({
+        behavior:'smooth',
+        block:'nearest'
+      })
+    })
+  }
+
+  const nextQuestion=async()=>{
+    if(index<questions.length-1){
+      setIndex(index+1)
+      setInput('')
+      setFeedback('idle')
+      setHintVisible(false)
+      return
+    }
+
+    const problems=buildAdaptiveHomework(learner,wrong)
+
+    if(finishing)return
+    setFinishing(true)
+
+    const next=touched({
+      ...learner,
+      wrongAnswers:[...learner.wrongAnswers,...wrong].slice(-100),
+      latestFeedback:{
+        title:wrong.length?'거의 다 왔어요. 틀린 문장만 다시 복습해요.':'오늘 입력을 모두 정확히 마쳤어요.',
+        summary:wrong.length?`${wrong.length}개 문장에서 수정할 부분을 찾았습니다.`:'직접 입력과 받아쓰기를 모두 정확히 완료했습니다.',
+        strengths:['일본어 키보드로 직접 문장을 입력했습니다.','듣고 문장으로 옮기는 연습을 완료했습니다.'],
+        focusChars:[],
+        recommendation:wrong.length?'숙제에서 같은 문장 구조를 다시 입력해보세요.':'숙제로 새로운 단어를 넣어 응용해보세요.',
+        recommendedMinutes:10,
+        score:questions.length-wrong.length,
+        total:questions.length,
+        createdAt:new Date().toISOString()
+      },
+      homework:{
+        title:'Day 1 직접 입력 숙제',
+        tasks:[],
+        problems,
+        createdAt:new Date().toISOString()
+      }
+    })
+    try{
+      await persist(next)
+      setStage('result')
+      window.scrollTo({top:0,behavior:'smooth'})
+    }finally{
+      setFinishing(false)
+    }
+  }
+
+  if(stage==='intro')return <div className="private-lesson-screen">
+    <section className="teacher-dialog-card">
+      <div className="teacher-face large">さとう</div>
+      <div>
+        <p className="eyebrow">사토 선생님</p>
+        <h1>오늘은 일본어를 직접 입력해볼 거예요.</h1>
+        <p>정답을 고르는 대신, 배운 문장을 일본어 키보드로 직접 작성합니다. 틀려도 괜찮아요. 수정할 부분만 같이 찾아볼게요.</p>
+        <button className="primary large-button" onClick={()=>setStage('learn')}>레슨 시작</button>
+      </div>
+    </section>
+  </div>
+
+  if(stage==='learn')return <div className="private-lesson-screen">
+    <section className="card lesson-teaching-card">
+      <p className="eyebrow">TODAY'S EXPRESSION</p>
+      <h1>わたしは がくせいです。</h1>
+      <button className="sound-button" onClick={()=>speak('わたしはがくせいです')}>발음 듣기</button>
+      <div className="sentence-breakdown">
+        <div><strong>わたし</strong><span>저·나</span></div>
+        <div><strong>は</strong><span>주제 조사</span></div>
+        <div><strong>がくせい</strong><span>학생</span></div>
+        <div><strong>です</strong><span>입니다</span></div>
+      </div>
+      <div className="teacher-tip">
+        <b>선생님 팁</b>
+        <p>문장 속 조사 「は」는 글자는 ha이지만 여기서는 wa로 읽습니다.</p>
+      </div>
+      <button className="primary large-button" onClick={()=>setStage('questions')}>직접 입력 시작</button>
+    </section>
+  </div>
+
+  if(stage==='result')return <div className="private-lesson-screen">
+    <section className="card lesson-result">
+      <p className="eyebrow">LESSON COMPLETE</p>
+      <div className="result-score">{questions.length-wrong.length}/{questions.length}</div>
+      <h1>{wrong.length?'틀린 문장은 숙제에서 다시 만나요.':'오늘 레슨을 완벽하게 마쳤어요.'}</h1>
+      <p>숙제는 체크리스트가 아니라 직접 풀어야 하는 5개의 문제로 생성되었습니다.</p>
+      <button className="primary large-button" onClick={()=>setView('homework')}>숙제 문제 확인</button>
+      <button className="secondary" onClick={()=>setView('home')}>홈으로 돌아가기</button>
+    </section>
+  </div>
+
+  return <div className="private-lesson-screen">
+    <section className="card input-question-card">
+      <div className="question-header">
+        <p className="eyebrow">QUESTION {index+1}/{questions.length}</p>
+        <div className="question-meter"><i style={{width:`${((index+1)/questions.length)*100}%`}}/></div>
+      </div>
+      <h2>{current.prompt}</h2>
+      {current.audio&&<button className="audio-play-big" onClick={()=>speak(current.audio!)}>♪ 소리 듣기</button>}
+
+      <input
+        className={`japanese-input ${feedback}`}
+        lang="ja"
+        value={input}
+        onChange={e=>{setInput(e.target.value);setFeedback('idle')}}
+        onKeyDown={e=>{if(e.key==='Enter')submit()}}
+        placeholder="일본어로 직접 입력하세요"
+        autoFocus
+      />
+
+      {feedback==='correct'&&<div className="gentle-feedback correct">
+        <strong>좋아요! 정확하게 입력했어요.</strong>
+        <div className="beginner-answer">
+          <span className="answer-label">정답</span>
+          <b>{current.answer}</b>
+          {current.answerKanji&&<span className="kanji-answer">{current.answerKanji}</span>}
+        </div>
+      </div>}
+
+      {feedback==='wrong'&&<div className="gentle-feedback wrong">
+        <strong>{teacherCorrectionMessage(input,current.answer)}</strong>
+        <div className="submitted-answer">
+          <span className="answer-label">내 입력</span>
+          <b>{input}</b>
+        </div>
+        <div className="beginner-answer">
+          <span className="answer-label">정답</span>
+          <b>{current.answer}</b>
+          {current.answerKanji&&<span className="kanji-answer">{current.answerKanji}</span>}
+        </div>
+      </div>}
+
+      {hintVisible&&<div className="hint-box">힌트: {current.hint}</div>}
+
+      <div className="question-actions lesson-question-actions">
+        <button className="secondary" onClick={()=>setHintVisible(true)}>힌트 보기</button>
+        {feedback==='idle'
+          ? <button className="primary" disabled={!input.trim()} onClick={submit}>확인하기</button>
+          : <button className="primary lesson-next-button" disabled={finishing} onClick={nextQuestion}>
+              {finishing?'저장 중...':index===questions.length-1?'수업 완료':'다음'}
+            </button>}
+      </div>
+    </section>
+  </div>
+}
+
+
+function ConversationPractice({learner,persist}:{learner:Learner,persist:(l:Learner)=>Promise<void>}){
+  type ConversationTurn = {
+    teacher:string
+    teacherKo:string
+    prompt:string
+    accepted:string[]
+    modelHiragana:string
+    modelKanji:string
+    hint:string
+  }
+
+  const turns:ConversationTurn[]=[
+    {
+      teacher:'こんにちは。きょうの ちょうしは どうですか？',
+      teacherKo:'안녕하세요. 오늘 컨디션은 어때요?',
+      prompt:'“좋습니다.” 또는 “조금 피곤합니다.”라고 일본어로 답해보세요.',
+      accepted:['げんきです','元気です','ちょっとつかれています','ちょっと疲れています','すこしつかれています','少し疲れています'],
+      modelHiragana:'げんきです。',
+      modelKanji:'元気です。',
+      hint:'좋습니다 = げんきです / 조금 피곤합니다 = ちょっと つかれています'
+    },
+    {
+      teacher:'きょうは なんの れんしゅうを しますか？',
+      teacherKo:'오늘은 어떤 연습을 하나요?',
+      prompt:'“댄스 연습을 합니다.”라고 일본어로 입력하세요.',
+      accepted:['ダンスのれんしゅうをします','ダンスの練習をします','ダンスれんしゅうをします','ダンス練習をします'],
+      modelHiragana:'ダンスの れんしゅうを します。',
+      modelKanji:'ダンスの 練習を します。',
+      hint:'댄스 = ダンス / 연습 = れんしゅう / 합니다 = します'
+    },
+    {
+      teacher:'わからない ところは ありますか？',
+      teacherKo:'모르는 부분이 있나요?',
+      prompt:'“한 번 더 부탁드립니다.”라고 일본어로 입력하세요.',
+      accepted:['もういちどおねがいします','もう一度お願いします','もういちどお願いします'],
+      modelHiragana:'もういちど おねがいします。',
+      modelKanji:'もう一度 お願いします。',
+      hint:'한 번 더 = もういちど / 부탁드립니다 = おねがいします'
+    },
+    {
+      teacher:'では、もういちど やってみましょう。',
+      teacherKo:'그럼 한 번 더 해봅시다.',
+      prompt:'“네, 다시 해보겠습니다.”라고 일본어로 입력하세요.',
+      accepted:['はいもういちどやってみます','はいもう一度やってみます','はいまたやってみます'],
+      modelHiragana:'はい、もういちど やってみます。',
+      modelKanji:'はい、もう一度 やってみます。',
+      hint:'네 = はい / 다시 해보겠습니다 = もういちど やってみます'
+    }
+  ]
+
+  const [index,setIndex]=useState(0)
+  const [input,setInput]=useState('')
+  const [feedback,setFeedback]=useState<'idle'|'correct'|'wrong'>('idle')
+  const [hintVisible,setHintVisible]=useState(false)
+  const [wrong,setWrong]=useState<WrongAnswer[]>([])
+  const [done,setDone]=useState(false)
+
+  const current=turns[index]
+
+  const submit=()=>{
+    if(!input.trim())return
+
+    const correct=current.accepted.some(answer=>
+      normalizeJapanese(answer)===normalizeJapanese(input)
+    )
+
+    setFeedback(correct?'correct':'wrong')
+
+    if(!correct){
+      setWrong(items=>[...items,{
+        id:`conversation-${index}-${Date.now()}`,
+        prompt:current.prompt,
+        submitted:input,
+        answer:current.modelHiragana,
+        category:'typing',
+        createdAt:new Date().toISOString()
+      }])
+    }
+  }
+
+  const next=async()=>{
+    if(index<turns.length-1){
+      setIndex(index+1)
+      setInput('')
+      setFeedback('idle')
+      setHintVisible(false)
+      return
+    }
+
+    const reviewProblems:HomeworkProblem[]=wrong.slice(-3).map((item,i)=>({
+      id:`conversation-hw-${Date.now()}-${i}`,
+      type:'typing',
+      prompt:`실전 회화 복습: ${item.prompt}`,
+      answer:item.answer,
+      acceptedAnswers:[item.answer],
+      hint:'오늘 회화에서 틀렸던 문장입니다.',
+      source:'mistake'
+    }))
+
+    const previous=learner.homework?.problems||[]
+    const nextHomework=reviewProblems.length
+      ? {
+          title:'실전 회화 복습 숙제',
+          tasks:[],
+          problems:[...reviewProblems,...previous].slice(0,10),
+          createdAt:new Date().toISOString()
+        }
+      : learner.homework
+
+    await persist(touched({
+      ...learner,
+      wrongAnswers:[...learner.wrongAnswers,...wrong].slice(-100),
+      homework:nextHomework,
+      latestFeedback:{
+        title:wrong.length?'오늘 회화에서 어려웠던 문장을 다시 연습해요.':'연습실 회화를 정확하게 마쳤어요.',
+        summary:wrong.length?`${wrong.length}개 문장을 오답노트와 숙제에 추가했습니다.`:'질문을 이해하고 일본어로 자연스럽게 답했습니다.',
+        strengths:['일본어 질문을 읽고 직접 답했습니다.','연습실에서 자주 쓰는 표현을 사용했습니다.'],
+        focusChars:[],
+        recommendation:wrong.length?'숙제에서 같은 상황을 다시 말해보세요.':'다음에는 조금 더 긴 문장으로 답해보세요.',
+        recommendedMinutes:wrong.length?10:5,
+        score:turns.length-wrong.length,
+        total:turns.length,
+        createdAt:new Date().toISOString()
+      }
+    }))
+
+    setDone(true)
+  }
+
+  if(done)return <div className="conversation-page">
+    <section className="card conversation-result">
+      <div className="teacher-face large">さとう</div>
+      <p className="eyebrow">ROLE PLAY COMPLETE</p>
+      <h1>실전 회화를 마쳤어요.</h1>
+      <p>{wrong.length
+        ? `${wrong.length}개 문장은 오답노트와 숙제에서 다시 연습할게요.`
+        : '오늘 대화를 모두 정확하게 이어갔어요.'}</p>
+      <div className="conversation-summary">
+        <strong>{turns.length-wrong.length}/{turns.length}</strong>
+        <span>정확한 응답</span>
+      </div>
+    </section>
+  </div>
+
+  return <div className="conversation-page">
+    <div className="conversation-progress">
+      <span>연습실 회화</span>
+      <b>{index+1}/{turns.length}</b>
+    </div>
+
+    <section className="conversation-chat card">
+      <div className="teacher-message">
+        <div className="teacher-face small">さとう</div>
+        <div>
+          <span>사토 선생님</span>
+          <p className="japanese-dialogue">{current.teacher}</p>
+          <small>{current.teacherKo}</small>
+          <button className="dialogue-audio" onClick={()=>speak(current.teacher)}>질문 듣기</button>
+        </div>
+      </div>
+
+      <div className="student-response">
+        <p>{current.prompt}</p>
+        <input
+          className={`japanese-input ${feedback}`}
+          lang="ja"
+          value={input}
+          onChange={event=>{
+            setInput(event.target.value)
+            setFeedback('idle')
+          }}
+          onKeyDown={event=>{
+            if(event.key==='Enter')submit()
+          }}
+          placeholder="일본어로 답하세요"
+          autoFocus
+        />
+
+        {hintVisible&&<div className="hint-box">힌트: {current.hint}</div>}
+
+        {feedback==='correct'&&<div className="gentle-feedback correct">
+          <strong>좋아요! 자연스럽게 대답했어요.</strong>
+          <div className="beginner-answer">
+            <span className="answer-label">기본 표현</span>
+            <b>{current.modelHiragana}</b>
+            <span className="kanji-answer">{current.modelKanji}</span>
+          </div>
+        </div>}
+
+        {feedback==='wrong'&&<div className="gentle-feedback wrong">
+          <strong>{teacherCorrectionMessage(input,current.modelHiragana)}</strong>
+          <div className="submitted-answer">
+            <span className="answer-label">내 답변</span>
+            <b>{input}</b>
+          </div>
+          <div className="beginner-answer">
+            <span className="answer-label">이렇게 말해볼 수 있어요</span>
+            <b>{current.modelHiragana}</b>
+            <span className="kanji-answer">{current.modelKanji}</span>
+          </div>
+          <button className="dialogue-audio retry" onClick={()=>speak(current.modelHiragana)}>정답 듣기</button>
+        </div>}
+
+        <div className="question-actions">
+          <button className="secondary" onClick={()=>setHintVisible(true)}>힌트 보기</button>
+          {feedback==='idle'
+            ? <button className="primary" disabled={!input.trim()} onClick={submit}>답변하기</button>
+            : <button className="primary" onClick={next}>{index===turns.length-1?'회화 완료':'다음 대화'}</button>}
+        </div>
+      </div>
+    </section>
+  </div>
+}
+
 function Course({learner,unlocked,setView}:{learner:Learner,unlocked:(id:string)=>boolean,setView:(v:View)=>void}){
   const isKanaLesson=(id:string)=>id.startsWith('hira-')||id.startsWith('kata-')
 
@@ -466,7 +1103,10 @@ function KanaTrainer({learner,persist,previewMode}:{learner:Learner,persist:(l:L
   const units=type==='hiragana'?hiraUnits:kataUnits
   const source=type==='hiragana'?hiragana:katakana
   const records=type==='hiragana'?learner.hiraganaMastery:learner.katakanaMastery
-  const typeLocked=!previewMode&&type==='katakana'&&!learner.hiraPassed
+  const hiraganaAverage=averageMastery(learner.hiraganaMastery)
+  const katakanaAverage=averageMastery(learner.katakanaMastery)
+  const hiraganaReady=hiraganaAverage>=100
+  const typeLocked=!previewMode&&type==='katakana'&&!hiraganaReady
   const unit=units[unitIndex]
 
   const unitComplete=(index:number)=>learner.completedLessons.includes(units[index].id)
@@ -495,7 +1135,7 @@ function KanaTrainer({learner,persist,previewMode}:{learner:Learner,persist:(l:L
   }
 
   const listenChar=(char:string)=>{
-    speak(char)
+    speak(char,'character')
     setHeardChars(prev=>prev.includes(char)?prev:[...prev,char])
   }
   const listenWord=(word:string)=>{
@@ -589,6 +1229,14 @@ function KanaTrainer({learner,persist,previewMode}:{learner:Learner,persist:(l:L
 
     const nextScore=score+(correct?1:0)
     setScore(nextScore)
+
+    if(type==='katakana'&&averageMastery(next.katakanaMastery)>=100){
+      next={...next,kataPassed:true,katakanaAdvanceChoice:'move-on'}
+    }
+    if(type==='hiragana'&&averageMastery(next.hiraganaMastery)>=100){
+      next={...next,hiraPassed:true}
+    }
+
     await persist(touched(next))
 
     if(quizIndex<quizItems.length-1){
@@ -819,18 +1467,46 @@ function KanaTrainer({learner,persist,previewMode}:{learner:Learner,persist:(l:L
     </div>}
     <div className="tabs">
       <button className={type==='hiragana'?'active':''} onClick={()=>{setType('hiragana');setUnitIndex(0)}}>히라가나</button>
-      <button disabled={!learner.hiraPassed} className={type==='katakana'?'active':''} onClick={()=>{setType('katakana');setUnitIndex(0)}}>가타카나</button>
+      <button disabled={!previewMode&&!hiraganaReady} className={type==='katakana'?'active':''} onClick={()=>{setType('katakana');setUnitIndex(0)}}>가타카나</button>
     </div>
 
     {typeLocked
-      ? <div className="card"><h2>가타카나는 아직 잠겨 있습니다.</h2><p>히라가나 전체 과정을 완료하고 종합평가를 통과해야 합니다.</p></div>
+      ? <div className="card kana-gate-card">
+          <p className="eyebrow">HIRAGANA FIRST</p>
+          <h2>히라가나를 100% 익히면 가타카나가 열립니다.</h2>
+          <p>현재 평균 숙련도는 <b>{hiraganaAverage}%</b>입니다. 기본 문장을 읽기 위해 히라가나는 완전히 익히고 넘어갈게요.</p>
+        </div>
       : <>
+        {type==='katakana'&&katakanaAverage>=50&&katakanaAverage<100&&
+          <div className="katakana-choice-card card">
+            <div className="teacher-face small">さとう</div>
+            <div className="katakana-choice-copy">
+              <p className="eyebrow">사토 선생님</p>
+              <h3>가타카나를 {katakanaAverage}% 익혔어요.</h3>
+              <p>
+                지금 실전 일본어로 넘어가도 괜찮아요.
+                다만 가타카나는 100%가 될 때까지 매일 숙제로 함께 복습할게요.
+              </p>
+              {learner.katakanaAdvanceChoice==='move-on'
+                ? <div className="choice-confirmed">실전 과정과 가타카나 숙제를 함께 진행 중입니다.</div>
+                : <div className="katakana-choice-actions">
+                    <button className="secondary" onClick={()=>persist(touched({...learner,katakanaAdvanceChoice:'continue'}))}>
+                      가타카나를 더 익힐래요
+                    </button>
+                    <button className="primary" onClick={()=>persist(touched({...learner,katakanaAdvanceChoice:'move-on'}))}>
+                      실전 수업과 함께 복습할래요
+                    </button>
+                  </div>}
+            </div>
+          </div>}
+
         {learner.homework&&<div className="homework-lock card">
           <div><p className="eyebrow">HOMEWORK FIRST</p><h3>지난 숙제를 확인해야 새 단원을 시작할 수 있습니다.</h3></div>
         </div>}
 
         <div className="kana-summary card">
           <div><span>평균 숙련도</span><strong>{averageMastery(records)}%</strong></div>
+          <div><span>과정 기준</span><strong>{type==='hiragana'?'100% 필수':'50%부터 선택'}</strong></div>
           <div><span>완료 단원</span><strong>{units.filter((_,i)=>unitComplete(i)).length}/{units.length}</strong></div>
           <div><span>다음 단계</span><strong>{units.find((_,i)=>!unitComplete(i))?.title||'전체 완료'}</strong></div>
         </div>
@@ -863,19 +1539,142 @@ function KanaTrainer({learner,persist,previewMode}:{learner:Learner,persist:(l:L
   </>
 }
 
-function Review({learner,persist}:{learner:Learner,persist:(l:Learner)=>Promise<void>}){
-  const weak=Object.entries(learner.hiraganaMastery).filter(([,r])=>r.mastery<100).sort((a,b)=>a[1].mastery-b[1].mastery).slice(0,12)
-  return <div className="card"><p className="eyebrow">SMART REVIEW</p><h2>취약 히라가나</h2>
-    {weak.length?<div className="review-grid">{weak.map(([c,r])=><button key={c} onClick={()=>speak(c)}><strong>{c}</strong><span>{r.mastery}%</span><small>정답 {r.correct} · 오답 {r.wrong}</small></button>)}</div>:<p>모든 히라가나가 100%입니다.</p>}
-    <p className="muted">현재는 숙련도가 낮은 문자를 우선 표시합니다. 다음 버전에서는 간격 반복 날짜까지 자동 계산합니다.</p></div>
+function Review({learner}:{learner:Learner,persist:(l:Learner)=>Promise<void>}){
+  const wrong=[...learner.wrongAnswers].reverse()
+  return <div className="wrong-note-page">
+    <div className="section-title-row">
+      <div><p className="eyebrow">WRONG ANSWER NOTE</p><h1>오답노트</h1></div>
+      <span className="level-chip">{wrong.length}개 저장</span>
+    </div>
+    {wrong.length?<div className="wrong-answer-list">{wrong.map(item=><article className="card" key={item.id}>
+      <small>{item.category==='dictation'?'받아쓰기':item.category==='typing'?'직접 입력':'객관식'}</small>
+      <h3>{item.prompt}</h3>
+      <div className="wrong-comparison">
+        <div><span>내 입력</span><strong>{item.submitted||'미입력'}</strong></div>
+        <b>→</b>
+        <div><span>정답</span><strong>{item.answer}</strong></div>
+      </div>
+      <button className="sound-button" onClick={()=>speak(item.answer)}>정답 발음 듣기</button>
+    </article>)}</div>:<div className="card empty-note"><h2>아직 저장된 오답이 없습니다.</h2><p>직접 입력이나 받아쓰기에서 틀린 문장이 자동으로 모입니다.</p></div>}
+  </div>
 }
-
 function Homework({learner,persist}:{learner:Learner,persist:(x:Learner)=>Promise<void>}){
-  const [checks,setChecks]=useState<boolean[]>(learner.homework?.tasks.map(()=>false)||[])
-  if(!learner.homework)return <div className="card"><h2>확인할 숙제가 없습니다.</h2></div>
-  const finish=async()=>{if(checks.some(x=>!x))return alert('모든 숙제를 확인하세요.');await persist(touched({...learner,homework:null}))}
-  return <div className="card"><p className="eyebrow">PREVIOUS HOMEWORK</p><h2>{learner.homework.title}</h2>
-    {learner.homework.tasks.map((t,i)=><label className="homework-row" key={t}><span>{t}</span><input type="checkbox" checked={checks[i]} onChange={e=>setChecks(checks.map((x,j)=>j===i?e.target.checked:x))}/></label>)}
-    <button className="primary spaced" onClick={finish}>숙제 확인 완료</button></div>
+  const problems=learner.homework?.problems||[]
+  const [index,setIndex]=useState(0)
+  const [input,setInput]=useState('')
+  const [selected,setSelected]=useState('')
+  const [feedback,setFeedback]=useState<'idle'|'correct'|'wrong'>('idle')
+  const [wrong,setWrong]=useState<WrongAnswer[]>([])
+  const [score,setScore]=useState(0)
+  const [done,setDone]=useState(false)
+
+  if(!learner.homework)return <div className="card empty-homework"><p className="eyebrow">HOMEWORK</p><h2>오늘 숙제는 모두 완료했어요.</h2><p>새 레슨을 끝내면 직접 입력과 받아쓰기 문제가 생성됩니다.</p></div>
+
+  if(!problems.length){
+    return <div className="card"><h2>{learner.homework.title}</h2><p>이전 형식의 숙제입니다. 완료 처리 후 새 레슨부터 문제형 숙제가 생성됩니다.</p>
+      <button className="primary" onClick={()=>persist(touched({...learner,homework:null}))}>이전 숙제 완료 처리</button></div>
+  }
+
+  if(done)return <div className="card homework-result">
+    <p className="eyebrow">HOMEWORK COMPLETE</p>
+    <div className="result-score">{score}/{problems.length}</div>
+    <h1>숙제를 완료했어요.</h1>
+    <p>{wrong.length?`${wrong.length}문제가 오답노트에 저장되었습니다.`:'모든 문제를 정확하게 풀었습니다.'}</p>
+    <div className="teacher-homework-comment">
+      <div className="teacher-face small">さとう</div>
+      <div>
+        <b>사토 선생님</b>
+        <p>{wrong.length?'틀린 문제는 다음 레슨 전에 다시 준비해둘게요. 오늘도 끝까지 잘했어요.':'오늘 배운 표현을 정확하게 복습했어요. 다음 레슨에서 새로운 표현을 시작해봐요.'}</p>
+      </div>
+    </div>
+  </div>
+
+  const problem=problems[index]
+  const submitted=problem.type==='choice'?selected:input
+  const submit=()=>{
+    if(!submitted)return
+    const correct=isJapaneseAnswerCorrect(submitted,problem.acceptedAnswers||problem.answer)
+    setFeedback(correct?'correct':'wrong')
+    if(correct)setScore(score+1)
+    else setWrong(items=>[...items,{
+      id:`homework-${problem.id}-${Date.now()}`,
+      prompt:problem.prompt,
+      submitted,
+      answer:problem.answer,
+      category:problem.type,
+      createdAt:new Date().toISOString()
+    }])
+  }
+
+  const next=async()=>{
+    if(index<problems.length-1){
+      setIndex(index+1);setInput('');setSelected('');setFeedback('idle');return
+    }
+    const nextLearner=touched({
+      ...learner,
+      wrongAnswers:[...learner.wrongAnswers,...wrong].slice(-100),
+      homework:null,
+      lessonDay:learner.lessonDay+1,
+      latestFeedback:{
+        title:wrong.length?'오늘 숙제에서 어려웠던 내용을 다시 준비할게요.':'오늘 숙제를 정확하게 완료했어요.',
+        summary:wrong.length?`${wrong.length}개 문제를 오답노트에 저장했습니다.`:'숙제 문제를 모두 정확하게 풀었습니다.',
+        strengths:['직접 일본어를 입력했습니다.','오늘 레슨 내용을 다시 복습했습니다.'],
+        focusChars:[],
+        recommendation:wrong.length?'다음 레슨 시작 전에 오답노트를 먼저 복습해보세요.':'다음 레슨에서는 새로운 표현으로 넘어가도 좋습니다.',
+        recommendedMinutes:wrong.length?10:5,
+        score:problems.length-wrong.length,
+        total:problems.length,
+        createdAt:new Date().toISOString()
+      }
+    })
+    await persist(nextLearner)
+    setDone(true)
+  }
+
+  return <div className="homework-quiz">
+    <section className="card input-question-card">
+      <div className="question-header">
+        <p className="eyebrow">HOMEWORK {index+1}/{problems.length}</p>
+        <div className="question-meter"><i style={{width:`${index/problems.length*100}%`}}/></div>
+      </div>
+      <div className={`homework-source ${problem.source||'lesson'}`}>
+        {problem.source==='mistake'?'이전 오답 복습':problem.source==='kana'?'문자 복습':'오늘 레슨 복습'}
+      </div>
+      <h2>{problem.prompt}</h2>
+      {problem.audio&&<button className="audio-play-big" onClick={()=>speak(problem.audio!)}>♪ 소리 듣기</button>}
+
+      {problem.type==='choice'
+        ? <div className="homework-choices">{problem.choices?.map(choice=><button className={selected===choice?'selected':''} onClick={()=>{setSelected(choice);setFeedback('idle')}} key={choice}>{choice}</button>)}</div>
+        : <input className={`japanese-input ${feedback}`} lang="ja" value={input} onChange={e=>{setInput(e.target.value);setFeedback('idle')}} placeholder="일본어로 입력하세요" autoFocus/>}
+
+      {feedback==='correct'&&<div className="gentle-feedback correct">
+        <strong>좋아요! 정확합니다.</strong>
+        <div className="beginner-answer">
+          <span className="answer-label">정답</span>
+          <b>{problem.answer}</b>
+          {problem.answerKanji&&<span className="kanji-answer">{problem.answerKanji}</span>}
+        </div>
+      </div>}
+      {feedback==='wrong'&&<div className="gentle-feedback wrong">
+        <strong>{teacherCorrectionMessage(submitted,problem.answer)}</strong>
+        <div className="submitted-answer">
+          <span className="answer-label">내 입력</span>
+          <b>{submitted}</b>
+        </div>
+        <div className="beginner-answer">
+          <span className="answer-label">정답</span>
+          <b>{problem.answer}</b>
+          {problem.answerKanji&&<span className="kanji-answer">{problem.answerKanji}</span>}
+        </div>
+      </div>}
+
+      <div className="question-actions">
+        {problem.hint&&<button className="secondary" onClick={()=>alert(problem.hint)}>힌트</button>}
+        {feedback==='idle'
+          ? <button className="primary" disabled={!submitted} onClick={submit}>채점하기</button>
+          : <button className="primary" onClick={next}>{index===problems.length-1?'숙제 완료':'다음 문제'}</button>}
+      </div>
+    </section>
+  </div>
 }
 function Video(){return <div className="card"><p className="eyebrow">LICENSE-SAFE VIDEO</p><h2>영상 학습</h2><div className="video-placeholder"><strong>자유 라이선스 또는 직접 제작 영상</strong><span>영상·제작자·출처·라이선스를 함께 기록합니다.</span></div><ol><li>영상 전체 보기</li><li>대본 한 줄씩 보기</li><li>표현과 문법 설명</li><li>쉐도잉</li><li>받아쓰기</li><li>응용 회화</li></ol></div>}
