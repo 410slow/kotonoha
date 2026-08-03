@@ -6,7 +6,7 @@ import { auth } from './lib/firebase'
 import { readLearner, saveLearner } from './lib/storage'
 import type { HomeworkProblem, Learner, LevelName, MasteryRecord, WrongAnswer } from './types'
 
-type View = 'home' | 'today' | 'conversation' | 'course' | 'kana' | 'homework' | 'review' | 'video'
+type View = 'home' | 'master' | 'teacher' | 'today' | 'conversation' | 'course' | 'kana' | 'homework' | 'review' | 'video'
 type KanaType = 'hiragana' | 'katakana'
 type KanaPair = readonly [string, string]
 
@@ -232,6 +232,12 @@ export default function App(){
   const [testIndex,setTestIndex]=useState(0)
   const [testScore,setTestScore]=useState(0)
   const [testStarted,setTestStarted]=useState(false)
+const isMaster =
+  active?.name?.trim().toLowerCase() === '410slow@naver.com';
+
+useEffect(() => {
+  if (isMaster) setPreviewMode(true);
+}, [isMaster]);
 
   useEffect(()=>onAuthStateChanged(auth,async current=>{
     setUser(current)
@@ -287,6 +293,7 @@ export default function App(){
   }
 
   const unlocked=(id:string)=>{
+    if(isMaster)return true
     if(!active)return false
     const lesson=lessons.find(x=>x.id===id)
     if(!lesson?.lockedBy)return true
@@ -312,7 +319,7 @@ export default function App(){
     <small className="status">Firebase 온라인 동기화 연결됨</small>
   </Centered>
 
-  if(!active.placementDone){
+  if(!active.placementDone&&!isMaster){
     if(!testStarted)return <Centered>
       <p className="eyebrow">LEVEL CHECK</p>
       <h1>{active.name}님의 실력을 확인할게요.</h1>
@@ -331,29 +338,32 @@ export default function App(){
   return <div className="shell">
     <aside>
       <div className="brand"><b>言</b><div><strong>KOTONOHA</strong><small>생활 회화형 일본어</small></div></div>
-      <div className="learner"><span>학습자</span><strong>{active.name}</strong><small>{active.level}</small></div>
+      <div className="learner"><span>{isMaster?'마스터 계정':'학습자'}</span><strong>{active.name}</strong><small>{isMaster?'모든 과정 테스트 가능':active.level}</small></div>
 
-      <button className={`preview-toggle ${previewMode?'active':''}`} onClick={()=>setPreviewMode(!previewMode)}>
-        <span>{previewMode?'미리보기 모드 ON':'미리보기 모드 OFF'}</span>
-        <small>{previewMode?'모든 단원 자유 확인 중':'눌러서 모든 수업 확인'}</small>
+      <button className={`preview-toggle ${(previewMode||isMaster)?'active':''}`} onClick={()=>!isMaster&&setPreviewMode(!previewMode)}>
+        <span>{isMaster?'마스터 모드 ON':previewMode?'미리보기 모드 ON':'미리보기 모드 OFF'}</span>
+        <small>{isMaster?'문제를 풀지 않고 모든 과정 확인 가능':previewMode?'모든 단원 자유 확인 중':'눌러서 모든 수업 확인'}</small>
       </button>
 
       <JapaneseVoiceSettings/>
 
-      <nav>{(['home','today','conversation','course','kana','homework','review','video'] as View[]).map(v=>
+      <nav>{((isMaster?['home','master','teacher','today','conversation','course','kana','homework','review','video']:['home','teacher','today','conversation','course','kana','homework','review','video']) as View[]).map(v=>
         <button className={view===v?'active':''} onClick={()=>setView(v)} key={v}>
-          {{home:'오늘의 홈',today:'오늘의 레슨',conversation:'실전 회화',course:'전체 과정',kana:'문자 마스터',homework:'숙제 문제',review:'오답노트',video:'영상 학습'}[v]}
+          {{home:'오늘의 홈',master:'마스터 도구',teacher:'AI 담임',today:'오늘의 레슨',conversation:'실전 회화',course:'전체 과정',kana:'문자 마스터',homework:'숙제 문제',review:'오답노트',video:'영상 학습'}[v]}
         </button>)}</nav>
       <button className="logout" onClick={()=>signOut(auth)}>로그아웃</button>
     </aside>
     <main>
       <header><div><p className="eyebrow">PRIVATE STUDY</p><h2>{active.level}</h2></div><span className="pill">SYNC</span></header>
-      {view==='home'&&<Home learner={active} setView={setView}/>}      {view==='today'&&<TodayLesson learner={active} persist={persist} setView={setView}/>}
-      {view==='conversation'&&<ConversationPractice learner={active} persist={persist}/>} 
-      {view==='course'&&<Course learner={active} unlocked={unlocked} setView={setView}/>}
-      {view==='kana'&&<KanaTrainer learner={active} persist={persist} previewMode={previewMode}/>}
+      {view==='home'&&<Home learner={active} setView={setView}/>}      
+      {view==='master'&&isMaster&&<MasterConsole learner={active} persist={persist} setView={setView}/>}      
+      {view==='teacher'&&<TeacherDashboard learner={active} setView={setView}/>}      
+      {view==='today'&&<TodayLesson learner={active} persist={persist} setView={setView} masterMode={isMaster}/>}
+      {view==='conversation'&&<ConversationPractice learner={active} persist={persist} masterMode={isMaster}/>} 
+      {view==='course'&&<Course learner={active} unlocked={unlocked} setView={setView} masterMode={isMaster}/>}
+      {view==='kana'&&<KanaTrainer learner={active} persist={persist} previewMode={previewMode||isMaster}/>}
       {view==='review'&&<Review learner={active} persist={persist}/>}
-      {view==='homework'&&<Homework learner={active} persist={persist}/>}
+      {view==='homework'&&<Homework learner={active} persist={persist} masterMode={isMaster}/>}
       {view==='video'&&<Video/>}
     </main>
   </div>
@@ -362,7 +372,183 @@ export default function App(){
 function Centered({children}:{children:React.ReactNode}){
   return <div className="auth"><div className="auth-card">{children}</div></div>
 }
+
+function MasterConsole({learner,persist,setView}:{learner:Learner,persist:(l:Learner)=>Promise<void>,setView:(v:View)=>void}){
+  const [day,setDay]=useState(learner.lessonDay)
+
+  const masteryAt=(records:Record<string,MasteryRecord>,value:number)=>Object.fromEntries(
+    Object.entries(records).map(([char,record])=>[char,{
+      ...record,
+      mastery:value,
+      correct:value>=100?Math.max(record.correct,5):record.correct,
+      lastReviewedAt:new Date().toISOString()
+    }])
+  )
+
+  const setKana=async(type:'hiragana'|'katakana',value:number)=>{
+    if(type==='hiragana'){
+      await persist(touched({...learner,hiraganaMastery:masteryAt(learner.hiraganaMastery,value),hiraPassed:value>=100}))
+    }else{
+      await persist(touched({...learner,katakanaMastery:masteryAt(learner.katakanaMastery,value),kataPassed:value>=100,katakanaAdvanceChoice:value>=50?'move-on':null}))
+    }
+  }
+
+  const unlockEverything=async()=>{
+    await persist(touched({
+      ...learner,
+      placementDone:true,
+      hiraPassed:true,
+      kataPassed:true,
+      hiraganaMastery:masteryAt(learner.hiraganaMastery,100),
+      katakanaMastery:masteryAt(learner.katakanaMastery,100),
+      katakanaAdvanceChoice:'move-on',
+      completedLessons:lessons.map(lesson=>lesson.id)
+    }))
+  }
+
+  const createHomework=async()=>{
+    const now=Date.now()
+    await persist(touched({...learner,homework:{
+      title:'마스터 테스트 숙제',
+      tasks:[],
+      createdAt:new Date().toISOString(),
+      problems:[
+        {id:`master-${now}-1`,type:'typing',prompt:'“저는 학생입니다.”를 일본어로 입력하세요.',answer:'わたしは がくせいです',answerKanji:'私は 学生です',acceptedAnswers:['わたしはがくせいです','私は学生です'],source:'lesson'},
+        {id:`master-${now}-2`,type:'dictation',prompt:'소리를 듣고 입력하세요.',answer:'よろしくおねがいします',answerKanji:'よろしくお願いします',acceptedAnswers:['よろしくおねがいします','よろしくお願いします'],audio:'よろしくおねがいします',source:'lesson'},
+        {id:`master-${now}-3`,type:'choice',prompt:'「せんせい」의 뜻은?',answer:'선생님',choices:['학생','선생님','회사원','연습생'],source:'lesson'}
+      ]
+    }}))
+  }
+
+  const createWrong=async()=>{
+    await persist(touched({...learner,wrongAnswers:[...learner.wrongAnswers,{
+      id:`master-wrong-${Date.now()}`,
+      prompt:'“잘 부탁드립니다.”를 일본어로 입력하세요.',
+      submitted:'よろしくおねします',
+      answer:'よろしくおねがいします',
+      category:'typing' as const,
+      createdAt:new Date().toISOString()
+    }].slice(-100)}))
+  }
+
+  return <div className="master-console">
+    <section className="master-hero">
+      <div><p className="eyebrow">MASTER ACCOUNT</p><h1>전체 과정 테스트 모드</h1><p>정답을 입력하지 않아도 모든 과정과 상태를 확인할 수 있습니다.</p></div>
+      <span>ON</span>
+    </section>
+
+    <section className="card master-section">
+      <h2>빠른 화면 이동</h2>
+      <div className="master-grid">{([
+        ['AI 담임','teacher'],['오늘 레슨','today'],['실전 회화','conversation'],['전체 과정','course'],['문자 마스터','kana'],['숙제','homework'],['오답노트','review'],['영상 학습','video']
+      ] as [string,View][]).map(([label,target])=><button onClick={()=>setView(target)} key={target}>{label}</button>)}</div>
+    </section>
+
+    <section className="card master-section">
+      <h2>학습 상태 즉시 변경</h2>
+      <div className="master-control-row"><b>히라가나</b>{[0,50,82,100].map(value=><button onClick={()=>setKana('hiragana',value)} key={value}>{value}%</button>)}</div>
+      <div className="master-control-row"><b>가타카나</b>{[0,50,75,100].map(value=><button onClick={()=>setKana('katakana',value)} key={value}>{value}%</button>)}</div>
+      <div className="master-control-row"><b>현재 DAY</b><input type="number" min="1" max="365" value={day} onChange={event=>setDay(Number(event.target.value)||1)}/><button onClick={()=>persist(touched({...learner,lessonDay:Math.max(1,Math.min(365,day))}))}>적용</button></div>
+      <button className="primary master-wide" onClick={unlockEverything}>모든 과정 100% 및 전체 해금</button>
+    </section>
+
+    <section className="card master-section">
+      <h2>테스트 데이터 생성</h2>
+      <div className="master-grid"><button onClick={createHomework}>숙제 3문제 생성</button><button onClick={createWrong}>테스트 오답 생성</button><button onClick={()=>persist(touched({...learner,homework:null}))}>숙제 비우기</button><button onClick={()=>persist(touched({...learner,wrongAnswers:[]}))}>오답 비우기</button></div>
+    </section>
+  </div>
+}
+
+type TeacherPriority = 'hiragana' | 'katakana' | 'typing' | 'listening' | 'homework' | 'conversation' | 'advance'
+
+type TeacherPlan = {
+  greeting:string
+  headline:string
+  message:string
+  priority:TeacherPriority
+  priorityLabel:string
+  todayTasks:{title:string;description:string;view:View}[]
+  strengths:string[]
+  cautions:string[]
+  recommendedMinutes:number
+}
+
+function buildTeacherPlan(learner:Learner):TeacherPlan{
+  const hira=averageMastery(learner.hiraganaMastery)
+  const kata=averageMastery(learner.katakanaMastery)
+  const recentWrong=[...learner.wrongAnswers].slice(-8).reverse()
+  const typingWrong=recentWrong.filter(item=>item.category==='typing').length
+  const listeningWrong=recentWrong.filter(item=>item.category==='dictation').length
+  const homeworkCount=learner.homework?.problems?.length||0
+
+  let priority:TeacherPriority='advance'
+  let priorityLabel='새로운 표현'
+  let headline='오늘은 새로운 표현을 시작해도 좋아요.'
+  let message='기초 복습과 새 표현을 균형 있게 진행해볼게요.'
+  let recommendedMinutes=20
+
+  if(hira<100){
+    priority='hiragana'
+    priorityLabel='히라가나 완성'
+    headline=`히라가나가 현재 ${hira}%예요. 오늘은 문자 복습이 가장 중요해요.`
+    message='히라가나는 모든 일본어 수업의 기초이므로 100%까지 정확하게 익히고 넘어갈게요.'
+    recommendedMinutes=15
+  }else if(homeworkCount>0){
+    priority='homework'
+    priorityLabel='숙제 먼저'
+    headline=`아직 ${homeworkCount}개의 숙제가 남아 있어요.`
+    message='새 수업 전에 어려웠던 문제부터 정리하면 오늘 학습이 훨씬 편해져요.'
+    recommendedMinutes=Math.max(10,Math.min(25,homeworkCount*3))
+  }else if(learner.katakanaAdvanceChoice==='move-on'&&kata<100){
+    priority='katakana'
+    priorityLabel='가타카나 병행'
+    headline=`실전 수업과 함께 가타카나 ${kata}%를 복습 중이에요.`
+    message='수업을 막지는 않지만, 자주 헷갈리는 가타카나는 매일 조금씩 숙제로 반복할게요.'
+  }else if(listeningWrong>typingWrong&&listeningWrong>0){
+    priority='listening'
+    priorityLabel='듣기·받아쓰기'
+    headline='최근에는 듣고 적는 문제가 조금 어려웠어요.'
+    message='오늘은 음성을 두 번 천천히 듣고, 들리는 단위대로 끊어서 입력해봐요.'
+  }else if(typingWrong>0){
+    priority='typing'
+    priorityLabel='직접 입력'
+    headline='최근 직접 입력에서 빠진 표현이 있었어요.'
+    message='정답을 외우기보다 문장 구조를 나누어 직접 완성하는 연습을 해볼게요.'
+  }else if(learner.completedLessons.length>0){
+    priority='conversation'
+    priorityLabel='실전 회화'
+    headline='기초 입력이 안정적이에요. 오늘은 실제 상황에서 사용해봐요.'
+    message='배운 표현을 질문과 답변 속에서 직접 꺼내 쓰는 연습을 추천해요.'
+  }
+
+  const todayTasks:{title:string;description:string;view:View}[]=[]
+  if(homeworkCount>0)todayTasks.push({title:`숙제 ${homeworkCount}문제`,description:'이전 오답과 오늘의 복습 문제',view:'homework'})
+  if(hira<100)todayTasks.push({title:'히라가나 문자 복습',description:`현재 ${hira}% · 100% 달성 필수`,view:'kana'})
+  else todayTasks.push({title:`DAY ${learner.lessonDay} 오늘의 레슨`,description:'직접 입력과 받아쓰기',view:'today'})
+  if(hira>=100&&kata<100)todayTasks.push({title:'가타카나 복습',description:learner.katakanaAdvanceChoice==='move-on'?`현재 ${kata}% · 실전 과정과 병행`:`현재 ${kata}% · 50%부터 이동 선택`,view:'kana'})
+  if(hira>=100)todayTasks.push({title:'연습실 실전 회화',description:'배운 문장을 실제 대화에 사용',view:'conversation'})
+
+  const strengths:string[]=[]
+  if(learner.streak>=3)strengths.push(`${learner.streak}일 연속 학습을 유지하고 있어요.`)
+  if(hira>=100)strengths.push('히라가나 기초를 완성했어요.')
+  if(kata>=50)strengths.push('가타카나로 실전 수업을 시작할 준비가 되었어요.')
+  if(recentWrong.length===0)strengths.push('최근 저장된 오답이 없어요.')
+  if(learner.latestFeedback?.strengths?.length)strengths.push(...learner.latestFeedback.strengths.slice(0,2))
+
+  const cautions:string[]=[]
+  if(hira<100)cautions.push('히라가나는 100% 숙달 전까지 다음 문자 단계가 잠겨 있어요.')
+  if(homeworkCount>0)cautions.push('남은 숙제를 먼저 풀면 오답이 누적되지 않아요.')
+  if(typingWrong>0)cautions.push(`최근 직접 입력 오답 ${typingWrong}개를 다시 확인해요.`)
+  if(listeningWrong>0)cautions.push(`최근 받아쓰기 오답 ${listeningWrong}개를 다시 들어봐요.`)
+  if(learner.katakanaAdvanceChoice==='move-on'&&kata<100)cautions.push('가타카나는 100%가 될 때까지 숙제에 계속 포함돼요.')
+
+  const hour=new Date().getHours()
+  const greeting=hour<12?'좋은 아침이에요':hour<18?'오늘도 반가워요':'오늘 하루도 수고했어요'
+  return {greeting,headline,message,priority,priorityLabel,todayTasks:todayTasks.slice(0,3),strengths:Array.from(new Set(strengths)).slice(0,4),cautions:Array.from(new Set(cautions)).slice(0,4),recommendedMinutes}
+}
+
 function Home({learner,setView}:{learner:Learner,setView:(v:View)=>void}){
+  const plan=buildTeacherPlan(learner)
   const hiraAvg=averageMastery(learner.hiraganaMastery)
   const homeworkCount=learner.homework?.problems?.length||0
   const recentWrong=learner.wrongAnswers.slice(-3).reverse()
@@ -372,7 +558,7 @@ function Home({learner,setView}:{learner:Learner,setView:(v:View)=>void}){
       <div>
         <p className="eyebrow">PRIVATE LESSON · DAY {learner.lessonDay}</p>
         <h1>안녕하세요, {learner.name}님.</h1>
-        <p>매일 20분, AI 담임과 함께하는 일본어 레슨</p>
+        <p>{plan.headline}</p>
         <button className="primary lesson-start-button" onClick={()=>setView(learner.homework?'homework':'today')}>
           {learner.homework?'숙제부터 시작':'오늘의 레슨 시작'}
         </button>
@@ -381,7 +567,8 @@ function Home({learner,setView}:{learner:Learner,setView:(v:View)=>void}){
         <div className="teacher-face">さとう</div>
         <span>담임 선생님</span>
         <strong>사토 선생님</strong>
-        <p>{learner.latestFeedback?.summary||'오늘도 서두르지 않고 정확하게 연습해봐요.'}</p>
+        <p>{plan.message}</p>
+        <button className="teacher-report-link" onClick={()=>setView('teacher')}>오늘의 담임 리포트</button>
       </div>
     </section>
 
@@ -434,6 +621,49 @@ function Home({learner,setView}:{learner:Learner,setView:(v:View)=>void}){
     </div>
   </div>
 }
+
+function TeacherDashboard({learner,setView}:{learner:Learner,setView:(v:View)=>void}){
+  const plan=buildTeacherPlan(learner)
+  const hira=averageMastery(learner.hiraganaMastery)
+  const kata=averageMastery(learner.katakanaMastery)
+  const homeworkCount=learner.homework?.problems?.length||0
+  const recentWrong=[...learner.wrongAnswers].slice(-5).reverse()
+
+  return <div className="teacher-dashboard">
+    <section className={`teacher-briefing priority-${plan.priority}`}>
+      <div className="teacher-face extra-large">さとう</div>
+      <div className="teacher-briefing-copy">
+        <p className="eyebrow">AI HOMEROOM TEACHER</p>
+        <h1>{plan.greeting}, {learner.name}님.</h1>
+        <h2>{plan.headline}</h2>
+        <p>{plan.message}</p>
+        <div className="teacher-priority"><span>오늘의 최우선</span><strong>{plan.priorityLabel}</strong><small>추천 학습 시간 {plan.recommendedMinutes}분</small></div>
+      </div>
+    </section>
+
+    <section className="teacher-plan-section card">
+      <div className="section-title-row"><div><p className="eyebrow">TODAY'S PERSONAL PLAN</p><h2>사토 선생님이 정한 오늘 순서</h2></div><span className="level-chip">개인 맞춤</span></div>
+      <div className="teacher-task-list">
+        {plan.todayTasks.map((task,index)=><button key={`${task.title}-${index}`} onClick={()=>setView(task.view)}><b>{String(index+1).padStart(2,'0')}</b><span><strong>{task.title}</strong><small>{task.description}</small></span><i>시작</i></button>)}
+      </div>
+    </section>
+
+    <div className="teacher-report-grid">
+      <section className="card teacher-analysis-card">
+        <p className="eyebrow">LEARNING STATUS</p><h2>현재 학습 상태</h2>
+        <div className="teacher-metric"><span>히라가나</span><div><i style={{width:`${hira}%`}}/></div><strong>{hira}%</strong></div>
+        <div className="teacher-metric"><span>가타카나</span><div><i style={{width:`${kata}%`}}/></div><strong>{kata}%</strong></div>
+        <div className="teacher-mini-stats"><div><span>현재 DAY</span><strong>{learner.lessonDay}</strong></div><div><span>숙제</span><strong>{homeworkCount}</strong></div><div><span>연속 학습</span><strong>{learner.streak}일</strong></div></div>
+      </section>
+      <section className="card teacher-analysis-card"><p className="eyebrow">TEACHER NOTE</p><h2>잘하고 있는 점</h2>{plan.strengths.length?<div className="teacher-note-list positive">{plan.strengths.map(item=><p key={item}>{item}</p>)}</div>:<p className="muted">학습을 진행하면 강점 분석이 표시됩니다.</p>}</section>
+      <section className="card teacher-analysis-card"><p className="eyebrow">NEXT FOCUS</p><h2>조금 더 연습할 점</h2>{plan.cautions.length?<div className="teacher-note-list caution">{plan.cautions.map(item=><p key={item}>{item}</p>)}</div>:<p className="muted">현재 특별히 막히는 부분이 없습니다.</p>}</section>
+      <section className="card teacher-analysis-card"><p className="eyebrow">RECENT REVIEW</p><h2>최근 오답 표현</h2>{recentWrong.length?<div className="teacher-wrong-list">{recentWrong.map(item=><button key={item.id} onClick={()=>speak(item.answer)}><span>{item.submitted||'미입력'}</span><b>{item.answer}</b><small>정답 듣기</small></button>)}</div>:<p className="muted">최근 저장된 오답이 없습니다.</p>}{recentWrong.length>0&&<button className="secondary spaced" onClick={()=>setView('review')}>오답노트 전체 보기</button>}</section>
+    </div>
+
+    {learner.latestFeedback&&<section className="card latest-teacher-feedback"><div className="teacher-face small">さとう</div><div><p className="eyebrow">LAST FEEDBACK</p><h2>{learner.latestFeedback.title}</h2><p>{learner.latestFeedback.summary}</p><strong>다음 추천: {learner.latestFeedback.recommendation}</strong></div></section>}
+  </div>
+}
+
 function Stat({label,value}:{label:string,value:string}){return <div className="card"><span>{label}</span><strong>{value}</strong></div>}
 function averageMastery(records:Record<string,MasteryRecord>){
   const values=Object.values(records);return values.length?Math.round(values.reduce((s,x)=>s+x.mastery,0)/values.length):0
@@ -549,7 +779,7 @@ function buildAdaptiveHomework(learner:Learner,lessonWrong:WrongAnswer[]):Homewo
   return [...reviewProblems,...katakanaReview,...core].slice(0,10)
 }
 
-function TodayLesson({learner,persist,setView}:{learner:Learner,persist:(l:Learner)=>Promise<void>,setView:(v:View)=>void}){
+function TodayLesson({learner,persist,setView,masterMode=false}:{learner:Learner,persist:(l:Learner)=>Promise<void>,setView:(v:View)=>void,masterMode?:boolean}){
   type LessonQuestion = {
     id:string
     type:'typing'|'dictation'
@@ -734,6 +964,7 @@ function TodayLesson({learner,persist,setView}:{learner:Learner,persist:(l:Learn
 
       <div className="question-actions lesson-question-actions">
         <button className="secondary" onClick={()=>setHintVisible(true)}>힌트 보기</button>
+        {masterMode&&<button className="master-skip" disabled={finishing} onClick={nextQuestion}>{index===questions.length-1?'마스터 완료':'마스터 다음'}</button>}
         {feedback==='idle'
           ? <button className="primary" disabled={!input.trim()} onClick={submit}>확인하기</button>
           : <button className="primary lesson-next-button" disabled={finishing} onClick={nextQuestion}>
@@ -745,7 +976,7 @@ function TodayLesson({learner,persist,setView}:{learner:Learner,persist:(l:Learn
 }
 
 
-function ConversationPractice({learner,persist}:{learner:Learner,persist:(l:Learner)=>Promise<void>}){
+function ConversationPractice({learner,persist,masterMode=false}:{learner:Learner,persist:(l:Learner)=>Promise<void>,masterMode?:boolean}){
   type ConversationTurn = {
     teacher:string
     teacherKo:string
@@ -950,6 +1181,7 @@ function ConversationPractice({learner,persist}:{learner:Learner,persist:(l:Lear
 
         <div className="question-actions">
           <button className="secondary" onClick={()=>setHintVisible(true)}>힌트 보기</button>
+          {masterMode&&<button className="master-skip" onClick={next}>{index===turns.length-1?'마스터 완료':'마스터 다음'}</button>}
           {feedback==='idle'
             ? <button className="primary" disabled={!input.trim()} onClick={submit}>답변하기</button>
             : <button className="primary" onClick={next}>{index===turns.length-1?'회화 완료':'다음 대화'}</button>}
@@ -959,7 +1191,7 @@ function ConversationPractice({learner,persist}:{learner:Learner,persist:(l:Lear
   </div>
 }
 
-function Course({learner,unlocked,setView}:{learner:Learner,unlocked:(id:string)=>boolean,setView:(v:View)=>void}){
+function Course({learner,unlocked,setView,masterMode=false}:{learner:Learner,unlocked:(id:string)=>boolean,setView:(v:View)=>void,masterMode?:boolean}){
   const isKanaLesson=(id:string)=>id.startsWith('hira-')||id.startsWith('kata-')
 
   return <div className="course-page">
@@ -977,7 +1209,7 @@ function Course({learner,unlocked,setView}:{learner:Learner,unlocked:(id:string)
         const open=unlocked(lesson.id)
         const kanaLesson=isKanaLesson(lesson.id)
         const done=learner.completedLessons.includes(lesson.id)
-        const status=!open?'잠김':kanaLesson?'학습 가능':'준비 중'
+        const status=!open?'잠김':kanaLesson?'학습 가능':masterMode?'마스터 보기':'준비 중'
 
         return <div className={`lesson ${!open?'locked':''} ${!kanaLesson&&open?'coming-soon':''}`} key={lesson.id}>
           <div>
@@ -991,7 +1223,7 @@ function Course({learner,unlocked,setView}:{learner:Learner,unlocked:(id:string)
           </div>
           {kanaLesson
             ? <button disabled={!open} onClick={()=>setView('kana')}>{!open?'잠김':done?'문자 과정에서 복습':'문자 과정에서 학습'}</button>
-            : <button disabled>준비 중</button>}
+            : masterMode?<button onClick={()=>setView('today')}>마스터 미리보기</button>:<button disabled>준비 중</button>}
         </div>
       })}
     </div>
@@ -1558,7 +1790,7 @@ function Review({learner}:{learner:Learner,persist:(l:Learner)=>Promise<void>}){
     </article>)}</div>:<div className="card empty-note"><h2>아직 저장된 오답이 없습니다.</h2><p>직접 입력이나 받아쓰기에서 틀린 문장이 자동으로 모입니다.</p></div>}
   </div>
 }
-function Homework({learner,persist}:{learner:Learner,persist:(x:Learner)=>Promise<void>}){
+function Homework({learner,persist,masterMode=false}:{learner:Learner,persist:(x:Learner)=>Promise<void>,masterMode?:boolean}){
   const problems=learner.homework?.problems||[]
   const [index,setIndex]=useState(0)
   const [input,setInput]=useState('')
@@ -1670,6 +1902,7 @@ function Homework({learner,persist}:{learner:Learner,persist:(x:Learner)=>Promis
 
       <div className="question-actions">
         {problem.hint&&<button className="secondary" onClick={()=>alert(problem.hint)}>힌트</button>}
+        {masterMode&&<button className="master-skip" onClick={next}>{index===problems.length-1?'마스터 완료':'마스터 다음'}</button>}
         {feedback==='idle'
           ? <button className="primary" disabled={!submitted} onClick={submit}>채점하기</button>
           : <button className="primary" onClick={next}>{index===problems.length-1?'숙제 완료':'다음 문제'}</button>}
