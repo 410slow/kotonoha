@@ -771,7 +771,14 @@
   });
   const endLook = (e) => { if (e.pointerId === lookId) { lookId = null; if (lookMoved < 8 && canHit()) punch(); } };
   canvas.addEventListener('pointerup', endLook); canvas.addEventListener('pointercancel', endLook);
-  document.addEventListener('mousemove', (e) => { if (document.pointerLockElement === canvas) { P.yaw -= e.movementX * 0.0022; P.pitch = Math.max(-1.1, Math.min(1.1, P.pitch - e.movementY * 0.0022)); } });
+  let lockFresh = false;
+  document.addEventListener('pointerlockchange', () => { lockFresh = document.pointerLockElement === canvas; });
+  document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement !== canvas) return;
+    if (lockFresh) { lockFresh = false; return; }                                   // 잠금 직후 첫 이벤트의 점프 무시
+    if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;          // 비정상 점프 무시
+    P.yaw -= e.movementX * 0.0022; P.pitch = Math.max(-1.1, Math.min(1.1, P.pitch - e.movementY * 0.0022));
+  });
   $('#btnMute').addEventListener('click', (e) => { setMuted(!muted); e.currentTarget.textContent = muted ? '🔇' : '🔊'; });
   $('#diffSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; diffKey = b.dataset.diff; [...$('#diffSeg').children].forEach(c => c.classList.toggle('on', c === b)); });
   $('#btnStart').addEventListener('click', startGame);
@@ -839,7 +846,7 @@
     buildWorld(); buildNav(); resize(); initFirestore();
     camera.position.set(WORLD.start.x, 1.58, WORLD.start.z);
     loading.textContent = ''; requestAnimationFrame(loop);
-    if (location.hash.includes('debug')) window.__engma = { P, G, friend, WORLD, punch, startGame, solids, trash, setStatus, bfs, stepAlong, NAV, now: () => now() - G.startT };
+    if (location.hash.includes('debug')) window.__engma = { P, G, friend, WORLD, punch, startGame, solids, trash, setStatus, bfs, stepAlong, NAV, scene, camera, now: () => now() - G.startT };
   }
   init();
 })();
