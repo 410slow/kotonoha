@@ -267,7 +267,7 @@
   const trash = [];       // {mesh,x,z,kind,hitT}
   const creaks = [];      // {x0,z0,x1,z1,t}
   const WORLD = { w: 16, d: 11, start: { x: 1.7, z: 10.0 }, seat: { x: 12.5, z: 1.75 }, roomRect: { x0: 9.15, z0: 0.15, x1: 15.85, z1: 4.85 }, door: { x: 10.7, z: 5 } };
-  const friend = { sprite: null, state: 'eat', pos: new THREE.Vector3(WORLD.seat.x, 0, WORLD.seat.z), tex: {}, t: 0, nextLook: 5, lookEnd: 0, cueAt: 0, cued: false, suspicion: 0, frame: 0, frameT: 0, path: null, pathT: 0, hitOff: 0, stunned: 0, chewT: 0, slap: null, stars: null, eyes: null, exclaim: null, light: null };
+  const friend = { sprite: null, rig: null, walkT: 0, state: 'eat', pos: new THREE.Vector3(WORLD.seat.x, 0, WORLD.seat.z), tex: {}, t: 0, nextLook: 5, lookEnd: 0, cueAt: 0, cued: false, suspicion: 0, frame: 0, frameT: 0, path: null, pathT: 0, hitOff: 0, stunned: 0, chewT: 0, slap: null, stars: null, eyes: null, exclaim: null, light: null };
 
   function addSolid(x0, z0, x1, z1) { solids.push({ x0, z0, x1, z1 }); }
   function box(w, h, d, mat, x, y, z, solid = true, castShadow = true) {
@@ -422,10 +422,61 @@
     // ---- 균승이 ----
     friend.sprite = sprite(friend.tex.idle, 1, 1, WORLD.seat.x, 1.0, WORLD.seat.z);
     setFriendSprite('idle');
+    if (friend.rig) { scene.add(friend.rig.root); friend.rig.root.position.set(WORLD.seat.x, 0, WORLD.seat.z); }
     friend.slap = sprite(TEX.slap, 0.5, 0.5, 0, -10, 0); friend.stars = sprite(TEX.stars, 1.2, 0.6, 0, -10, 0);
     friend.eyes = sprite(TEX.eyes, 1.0, 0.38, 0, -10, 0); friend.exclaim = sprite(TEX.exclaim, 0.5, 0.5, 0, -10, 0);
   }
 
+  // ======================= 종이인형 리그 (사진을 관절별로 나눠 걷게 함) =======================
+  const RIG_HEIGHT = 1.82;
+  async function loadRig() {
+    try {
+      const r = await fetch('./assets/rig.json'); if (!r.ok) return null; const man = await r.json();
+      const loader = new THREE.TextureLoader();
+      const texes = await Promise.all(man.parts.map(pt => new Promise((res) => loader.load('./assets/' + pt.file, (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; res(t); }, undefined, () => res(null)))));
+      if (texes.some(t => !t)) return null;
+      const s = RIG_HEIGHT / man.srcH; const root = new THREE.Group(); const parts = {};
+      const order = { shinL: 0, shinR: 0, thighL: 1, thighR: 1, torso: 2, armL: 3, armR: 3, head: 4 };
+      man.parts.forEach((pt, i) => {
+        const [x0, y0, x1, y1] = pt.box, [px, py] = pt.pivot;
+        const g = new THREE.Group(); g.name = pt.name;
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry((x1 - x0) * s, (y1 - y0) * s),
+          new THREE.MeshStandardMaterial({ map: texes[i], transparent: true, alphaTest: 0.4, roughness: 0.9, side: THREE.DoubleSide }));
+        mesh.position.set(((x0 + x1) / 2 - px) * s, -((y0 + y1) / 2 - py) * s, order[pt.name] * 0.012);
+        mesh.castShadow = true; g.add(mesh); parts[pt.name] = { group: g, mesh: mesh, pivot: [px, py], parent: pt.parent };
+      });
+      for (const pt of man.parts) {
+        const P = parts[pt.name];
+        if (pt.parent) { const par = parts[pt.parent]; P.group.position.set((P.pivot[0] - par.pivot[0]) * s, -(P.pivot[1] - par.pivot[1]) * s, 0); par.group.add(P.group); }
+        else { P.group.position.set(0, (man.srcH - P.pivot[1]) * s, 0); root.add(P.group); }
+      }
+      root.visible = false; return { root, parts, hipY: (man.srcH - parts.torso.pivot[1]) * s };
+    } catch (e) { console.warn('rig load failed', e); return null; }
+  }
+  function rigShow(on) {
+    if (!friend.rig) { friend.sprite.visible = true; return; }
+    friend.rig.root.visible = on; friend.sprite.visible = !on;
+  }
+  // 정면에서 본 걷기: 다리는 번갈아 짧아지며(앞으로 내딛는 원근) 무릎을 들고, 몸은 위아래로 흔들리고 팔은 반대로 흔든다
+  function rigAnimate(dt, moving, run) {
+    const R = friend.rig; if (!R) return;
+    const p = R.parts, freq = run ? 3.1 : 2.0, amp = run ? 1.35 : 1;
+    if (moving) friend.walkT += dt * freq * Math.PI * 2; else friend.walkT += (Math.round(friend.walkT / Math.PI) * Math.PI - friend.walkT) * Math.min(1, dt * 8);
+    const ph = friend.walkT, sL = Math.sin(ph), sR = -sL, liftL = Math.max(0, sL), liftR = Math.max(0, sR);
+    const bob = moving ? (1 - Math.cos(ph * 2)) * 0.5 * 0.045 * amp : 0;
+    p.torso.group.position.y = R.hipY + bob; p.torso.group.position.x = moving ? Math.sin(ph) * 0.02 * amp : 0;
+    p.torso.group.rotation.z = (moving ? Math.sin(ph) * 0.045 : 0) * amp;
+    p.thighL.group.rotation.z = -sL * 0.07 * amp; p.thighR.group.rotation.z = -sR * 0.07 * amp;
+    p.thighL.group.scale.y = 1 - 0.18 * liftL * amp; p.thighR.group.scale.y = 1 - 0.18 * liftR * amp;
+    p.shinL.group.scale.y = 1 - 0.45 * liftL * amp; p.shinR.group.scale.y = 1 - 0.45 * liftR * amp;
+    p.shinL.group.rotation.z = -liftL * 0.12 * amp; p.shinR.group.rotation.z = liftR * 0.12 * amp;
+    p.armL.group.rotation.z = -sL * 0.4 * amp; p.armR.group.rotation.z = -sR * 0.4 * amp;
+    p.armL.group.scale.y = 1 - 0.18 * Math.max(0, -sL) * amp; p.armR.group.scale.y = 1 - 0.18 * Math.max(0, -sR) * amp;
+    p.head.group.rotation.z = -Math.sin(ph) * 0.035 * amp; p.head.group.position.y = p.head.group.userData.y0 ?? (p.head.group.userData.y0 = p.head.group.position.y);
+    p.head.group.position.y = p.head.group.userData.y0 - bob * 0.3 + (moving ? 0 : Math.sin(now() * 1.5) * 0.004);
+    // 항상 카메라를 향함
+    R.root.rotation.y = Math.atan2(camera.position.x - R.root.position.x, camera.position.z - R.root.position.z);
+  }
   function setFriendSprite(name) {
     const tex = friend.tex[name]; if (!tex || !friend.sprite) return;
     const img = tex.image; const aspect = img.width / img.height;
@@ -573,12 +624,13 @@
   function setFriendHud(icon, text) { friendIcon.textContent = icon; friendText.textContent = text; }
   function friendGoto(state) {
     friend.state = state; friend.t = 0;
+    rigShow(state === 'chase' || state === 'return');
     if (state === 'eat') { friend.nextLook = D().lookMin + Math.random() * (D().lookMax - D().lookMin); friend.cued = false; setFriendSprite(Math.random() < 0.35 ? 'phone' : 'idle'); setFriendHud('🍗', '밥 먹는 중'); friend.sprite.material.rotation = 0; }
     if (state === 'look') { friend.lookEnd = D().lookDurMin + Math.random() * (D().lookDurMax - D().lookDurMin); setFriendSprite('look'); setFriendHud('👀', '두리번'); showOver(friend.eyes, 1.0); }
     if (state === 'hit') { setFriendSprite('hit'); setFriendHud('😵', '맞음'); }
     if (state === 'taunt') { setFriendSprite('taunt'); setFriendHud('😜', '엥마~'); }
-    if (state === 'chase') { setFriendSprite('chase0'); setFriendHud('😡', '쫓아온다!'); vignette.classList.add('danger'); friend.heartT = 0; showOver(friend.exclaim, 1.2); }
-    if (state === 'return') { setFriendSprite('chase0'); setFriendHud('😤', '돌아가는 중'); vignette.classList.remove('danger'); }
+    if (state === 'chase') { if (!friend.rig) setFriendSprite('chase0'); setFriendHud('😡', '쫓아온다!'); vignette.classList.add('danger'); friend.heartT = 0; showOver(friend.exclaim, 1.2); }
+    if (state === 'return') { if (!friend.rig) setFriendSprite('chase0'); setFriendHud('😤', '돌아가는 중'); vignette.classList.remove('danger'); }
   }
   let overTimers = [];
   function showOver(sp, sec) { sp.userData.until = now() + sec; }
@@ -617,8 +669,9 @@
       const dx = gx - friend.pos.x, dz = gz - friend.pos.z, gl = Math.hypot(dx, dz) || 1;
       const speed = chasing ? D().chase : 1.6; const stepL = Math.min(gl, speed * dt);
       friend.pos.x += dx / gl * stepL; friend.pos.z += dz / gl * stepL;
-      friend.frameT += dt; if (friend.frameT > 0.24) { friend.frameT = 0; friend.frame ^= 1; setFriendSprite('chase' + friend.frame); }
-      sp.position.y = sp.userData.H / 2 + Math.abs(Math.sin(friend.t * 9)) * 0.05; sp.material.rotation = Math.sin(friend.t * 9) * 0.03;
+      if (friend.rig) { friend.rig.root.position.set(friend.pos.x, 0, friend.pos.z); rigAnimate(dt, stepL > 0.001, chasing && D().chase > 2.0); }
+      else { friend.frameT += dt; if (friend.frameT > 0.24) { friend.frameT = 0; friend.frame ^= 1; setFriendSprite('chase' + friend.frame); }
+        sp.position.y = sp.userData.H / 2 + Math.abs(Math.sin(friend.t * 9)) * 0.05; sp.material.rotation = Math.sin(friend.t * 9) * 0.03; }
       if (chasing) {
         friend.heartT -= dt; if (friend.heartT <= 0) { sfxHeart(); friend.heartT = Math.max(0.45, Math.min(1.2, d / 5)); }
         if (friendDist() < 0.8) caught();
@@ -629,7 +682,7 @@
     }
     sp.position.x = friend.pos.x; sp.position.z = friend.pos.z;
     // 오버레이 스프라이트들 (머리 위)
-    const headY = sp.position.y + sp.userData.H / 2;
+    const headY = (friend.rig && friend.rig.root.visible) ? RIG_HEIGHT : sp.position.y + sp.userData.H / 2;
     for (const o of [friend.eyes, friend.exclaim, friend.stars]) { if (o.userData.until > now()) { o.position.set(friend.pos.x, headY + 0.25, friend.pos.z); } else o.position.y = -10; }
     if (friend.slap.userData.until > now()) { friend.slap.position.set(friend.pos.x + 0.12, sp.position.y + sp.userData.H * 0.25, friend.pos.z + 0.02); friend.slap.material.opacity = Math.min(1, (friend.slap.userData.until - now()) / 0.6); } else friend.slap.position.y = -10;
     if (friend.light) friend.light.intensity = 9 + Math.sin(now() * 40) * 0.3;
@@ -665,7 +718,7 @@
     G.state = 'over'; G.endT = now() - G.startT;
     flash.style.opacity = .75; setTimeout(() => flash.style.opacity = 0, 200); restartAnim(stage, 'shake');
     sfxPunch(); say('엥마!!', 1800, true); sayEngma('catch'); setStatus('잡혔다… 😵', 'alert');
-    vignette.classList.remove('danger'); stage.classList.remove('walk', 'run'); setFriendSprite('taunt'); friend.sprite.position.y = 0.5 + 1.1 / 2;
+    vignette.classList.remove('danger'); stage.classList.remove('walk', 'run'); rigShow(false); setFriendSprite('taunt'); friend.sprite.position.y = 0.5 + 1.1 / 2;
     setTimeout(() => showResult(false), 1600);
   }
   function escaped() {
@@ -691,7 +744,7 @@
     $('#startOverlay').hidden = true; $('#overOverlay').hidden = true; $('#recordsOverlay').hidden = true;
     // 리셋
     P.x = WORLD.start.x; P.z = WORLD.start.z; P.yaw = 0; P.pitch = 0; P.stamina = 100; P.sneak = true; btnSneak.classList.add('on');
-    friend.pos.set(WORLD.seat.x, 0, WORLD.seat.z); friend.suspicion = 0; friend.path = null; friend.sprite.material.rotation = 0;
+    friend.pos.set(WORLD.seat.x, 0, WORLD.seat.z); friend.suspicion = 0; friend.path = null; friend.sprite.material.rotation = 0; friend.walkT = 0;
     G.state = 'play'; G.hit = false; G.startT = now(); G.hitT = 0; noiseLevel = 0;
     spawnTrash(); friendGoto('eat'); vignette.classList.remove('danger');
     timerSub.textContent = '균승이 방으로 (살금 켜짐)'; setStatus('살금살금… 🤫');
@@ -839,14 +892,14 @@
     camera = new THREE.PerspectiveCamera(72, 1, 0.05, 60);
     const resize = () => { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
     window.addEventListener('resize', resize);
-    buildTextures(); await loadTextures();
+    buildTextures(); await loadTextures(); friend.rig = await loadRig();
     if (!friend.tex.idle) { // 사진이 없으면 임시 스프라이트
       friend.tex.idle = friend.tex.phone = friend.tex.look = friend.tex.hit = friend.tex.taunt = friend.tex.chase0 = friend.tex.chase1 = makeTex(256, 512, (ctx, w, h) => { ctx.fillStyle = '#f3c9a6'; ctx.beginPath(); ctx.arc(128, 110, 80, 0, 7); ctx.fill(); ctx.fillStyle = '#222'; ctx.fillRect(40, 190, 176, 300); });
     }
     buildWorld(); buildNav(); resize(); initFirestore();
     camera.position.set(WORLD.start.x, 1.58, WORLD.start.z);
     loading.textContent = ''; requestAnimationFrame(loop);
-    if (location.hash.includes('debug')) window.__engma = { P, G, friend, WORLD, punch, startGame, solids, trash, setStatus, bfs, stepAlong, NAV, scene, camera, now: () => now() - G.startT };
+    if (location.hash.includes('debug')) window.__engma = { P, G, friend, WORLD, punch, startGame, solids, trash, setStatus, bfs, stepAlong, NAV, scene, camera, rigAnimate, rigShow, now: () => now() - G.startT };
   }
   init();
 })();
