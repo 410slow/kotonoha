@@ -33,20 +33,34 @@
   }
   function env(g, t, peak, attack, decay) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay); }
   let stepSide = 1;
-  function sfxStep(kind, surface) { // kind: sneak | walk | run
+  function sfxStep(kind, surface, gainMul = 1, panOverride = null) { // kind: sneak | walk | run
     if (!actx || muted) return;
     const t = actx.currentTime, run = kind === 'run', sneak = kind === 'sneak';
-    const vol = sneak ? 0.22 : run ? 0.9 : 0.55;
+    const vol = (sneak ? 0.22 : run ? 0.9 : 0.55) * gainMul; if (vol < 0.01) return;
     const src = actx.createBufferSource(); src.buffer = noiseBuffer(0.14);
     const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = surface === 'tile' ? 2.5 : 0.9;
     bp.frequency.value = surface === 'tile' ? 1500 + Math.random() * 500 : surface === 'rug' ? 220 + Math.random() * 80 : 330 + Math.random() * 160;
     const g = actx.createGain(); env(g, t, vol, 0.008, run ? 0.1 : 0.15);
-    const pan = actx.createStereoPanner ? actx.createStereoPanner() : null; stepSide = -stepSide; if (pan) pan.pan.value = stepSide * 0.45;
+    const pan = actx.createStereoPanner ? actx.createStereoPanner() : null; stepSide = -stepSide; if (pan) pan.pan.value = panOverride == null ? stepSide * 0.45 : panOverride;
     const thump = actx.createOscillator(); thump.type = 'sine'; thump.frequency.setValueAtTime(surface === 'tile' ? 180 : 110, t); thump.frequency.exponentialRampToValueAtTime(45, t + 0.12);
     const tg = actx.createGain(); env(tg, t, vol * (surface === 'rug' ? 0.5 : 0.8), 0.005, 0.13);
     src.connect(bp).connect(g); thump.connect(tg);
     if (pan) { g.connect(pan); tg.connect(pan); pan.connect(master); } else { g.connect(master); tg.connect(master); }
     src.start(t); thump.start(t); src.stop(t + 0.25); thump.stop(t + 0.25);
+  }
+  function sfxFriendStep(run) {
+    const dx = friend.pos.x - P.x, dz = friend.pos.z - P.z, d = Math.hypot(dx, dz);
+    const gain = Math.min(1.6, 2.2 / (1 + d * d * 0.35));
+    const rel = Math.atan2(dx, dz) - Math.atan2(-Math.sin(P.yaw), -Math.cos(P.yaw));   // 카메라 기준 방향
+    const pan = Math.max(-0.8, Math.min(0.8, -Math.sin(rel) * 0.8));
+    sfxStep(run ? 'run' : 'walk', surfaceAt(friend.pos.x, friend.pos.z), gain, pan);
+    if (run && d < 4) sfxBreath(gain);
+  }
+  function sfxBreath(g) { // 헉헉
+    if (!actx || muted) return;
+    const t = actx.currentTime; const src = actx.createBufferSource(); src.buffer = noiseBuffer(0.25);
+    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 0.7;
+    const gn = actx.createGain(); env(gn, t, 0.12 * g, 0.06, 0.2); src.connect(bp).connect(gn).connect(master); src.start(t); src.stop(t + 0.3);
   }
   function sfxCreak() {
     if (!actx || muted) return;
@@ -255,6 +269,7 @@
     TEX.fridge = makeTex(128, 256, (ctx, w, h) => { ctx.fillStyle = '#e6e8ea'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#c5c8cc'; ctx.fillRect(0, 100, w, 4); ctx.fillStyle = '#9aa0a6'; ctx.fillRect(100, 40, 8, 50); ctx.fillRect(100, 120, 8, 100);
       ctx.fillStyle = '#ff7043'; ctx.fillRect(20, 30, 30, 30); ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText('치킨', 22, 50); });
     TEX.mat = makeTex(128, 64, (ctx, w, h) => { ctx.fillStyle = '#6d4c41'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#d7ccc8'; ctx.font = 'bold 22px sans-serif'; ctx.fillText('WELCOME', 8, 40); });
+    TEX.shadow = makeTex(128, 128, (ctx, w, h) => { const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 64); g.addColorStop(0, 'rgba(0,0,0,.6)'); g.addColorStop(0.6, 'rgba(0,0,0,.3)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); });
     TEX.slap = makeTex(128, 128, (ctx, w, h) => { const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 64); g.addColorStop(0, 'rgba(255,60,60,.85)'); g.addColorStop(0.5, 'rgba(255,60,60,.45)'); g.addColorStop(1, 'rgba(255,60,60,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); });
     TEX.stars = makeTex(256, 128, (ctx, w, h) => { ctx.font = '48px serif'; ctx.fillText('⭐', 10, 60); ctx.fillText('💫', 100, 100); ctx.fillText('⭐', 190, 60); });
     TEX.eyes = makeTex(256, 96, (ctx, w, h) => { ctx.font = 'bold 60px sans-serif'; ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 6; ctx.strokeText('👀 ?', 50, 70); ctx.fillText('👀 ?', 50, 70); });
@@ -423,6 +438,8 @@
     friend.sprite = sprite(friend.tex.idle, 1, 1, WORLD.seat.x, 1.0, WORLD.seat.z);
     setFriendSprite('idle');
     if (friend.rig) { scene.add(friend.rig.root); friend.rig.root.position.set(WORLD.seat.x, 0, WORLD.seat.z); }
+    friend.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 24), new THREE.MeshBasicMaterial({ map: TEX.shadow, transparent: true, depthWrite: false, opacity: 0.85 }));
+    friend.shadow.rotation.x = -Math.PI / 2; friend.shadow.position.set(WORLD.seat.x, 0.006, WORLD.seat.z); scene.add(friend.shadow);
     friend.slap = sprite(TEX.slap, 0.5, 0.5, 0, -10, 0); friend.stars = sprite(TEX.stars, 1.2, 0.6, 0, -10, 0);
     friend.eyes = sprite(TEX.eyes, 1.0, 0.38, 0, -10, 0); friend.exclaim = sprite(TEX.exclaim, 0.5, 0.5, 0, -10, 0);
   }
@@ -453,7 +470,24 @@
       root.visible = false; return { root, parts, hipY: (man.srcH - parts.torso.pivot[1]) * s };
     } catch (e) { console.warn('rig load failed', e); return null; }
   }
+  async function loadWalk() { // assets/walk/walk.json 이 있으면 실제 걷는 영상 프레임을 쓴다
+    try {
+      const r = await fetch('./assets/walk/walk.json'); if (!r.ok) return null; const man = await r.json();
+      const loader = new THREE.TextureLoader();
+      const texes = await Promise.all(man.frames.map(f => new Promise((res) => loader.load('./assets/walk/' + f, (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; res(t); }, undefined, () => res(null)))));
+      if (!texes.length || texes.some(t => !t)) return null;
+      return { texes, fps: man.fps || 12, height: man.height || RIG_HEIGHT, t: 0 };
+    } catch (e) { return null; }
+  }
+  function walkAnimate(dt, moving, run) {
+    const Wk = friend.walk, sp = friend.sprite;
+    Wk.t += dt * Wk.fps * (moving ? (run ? 1.5 : 1) : 0);
+    const tex = Wk.texes[Math.floor(Wk.t) % Wk.texes.length];
+    if (sp.material.map !== tex) { sp.material.map = tex; sp.material.needsUpdate = true; const img = tex.image; sp.scale.set(Wk.height * img.width / img.height, Wk.height, 1); sp.userData.H = Wk.height; sp.userData.bottom = 0; }
+    sp.position.y = Wk.height / 2; sp.material.rotation = 0;
+  }
   function rigShow(on) {
+    if (friend.walk) { friend.sprite.visible = true; if (friend.rig) friend.rig.root.visible = false; return; }
     if (!friend.rig) { friend.sprite.visible = true; return; }
     friend.rig.root.visible = on; friend.sprite.visible = !on;
   }
@@ -669,7 +703,10 @@
       const dx = gx - friend.pos.x, dz = gz - friend.pos.z, gl = Math.hypot(dx, dz) || 1;
       const speed = chasing ? D().chase : 1.6; const stepL = Math.min(gl, speed * dt);
       friend.pos.x += dx / gl * stepL; friend.pos.z += dz / gl * stepL;
-      if (friend.rig) { friend.rig.root.position.set(friend.pos.x, 0, friend.pos.z); rigAnimate(dt, stepL > 0.001, chasing && D().chase > 2.0); }
+      const running = chasing && D().chase > 2.0;
+      if (stepL > 0.001) { friend.strideAcc = (friend.strideAcc || 0) + stepL; const stride = running ? 0.6 : 0.72; if (friend.strideAcc >= stride) { friend.strideAcc = 0; sfxFriendStep(running); } }
+      if (friend.walk) walkAnimate(dt, stepL > 0.001, running);
+      else if (friend.rig) { friend.rig.root.position.set(friend.pos.x, 0, friend.pos.z); rigAnimate(dt, stepL > 0.001, running); }
       else { friend.frameT += dt; if (friend.frameT > 0.24) { friend.frameT = 0; friend.frame ^= 1; setFriendSprite('chase' + friend.frame); }
         sp.position.y = sp.userData.H / 2 + Math.abs(Math.sin(friend.t * 9)) * 0.05; sp.material.rotation = Math.sin(friend.t * 9) * 0.03; }
       if (chasing) {
@@ -681,6 +718,7 @@
       } else if (d < 0.3) { friend.pos.set(WORLD.seat.x, 0, WORLD.seat.z); friendGoto('eat'); if (G.state === 'play') setStatus('살금살금… 🤫'); }
     }
     sp.position.x = friend.pos.x; sp.position.z = friend.pos.z;
+    if (friend.shadow) { friend.shadow.position.x = friend.pos.x; friend.shadow.position.z = friend.pos.z; friend.shadow.scale.setScalar((friend.state === 'chase' || friend.state === 'return') ? 1 : 1.3); }
     // 오버레이 스프라이트들 (머리 위)
     const headY = (friend.rig && friend.rig.root.visible) ? RIG_HEIGHT : sp.position.y + sp.userData.H / 2;
     for (const o of [friend.eyes, friend.exclaim, friend.stars]) { if (o.userData.until > now()) { o.position.set(friend.pos.x, headY + 0.25, friend.pos.z); } else o.position.y = -10; }
@@ -744,7 +782,7 @@
     $('#startOverlay').hidden = true; $('#overOverlay').hidden = true; $('#recordsOverlay').hidden = true;
     // 리셋
     P.x = WORLD.start.x; P.z = WORLD.start.z; P.yaw = 0; P.pitch = 0; P.stamina = 100; P.sneak = true; btnSneak.classList.add('on');
-    friend.pos.set(WORLD.seat.x, 0, WORLD.seat.z); friend.suspicion = 0; friend.path = null; friend.sprite.material.rotation = 0; friend.walkT = 0;
+    friend.pos.set(WORLD.seat.x, 0, WORLD.seat.z); friend.suspicion = 0; friend.path = null; friend.sprite.material.rotation = 0; friend.walkT = 0; friend.strideAcc = 0; if (friend.walk) friend.walk.t = 0;
     G.state = 'play'; G.hit = false; G.startT = now(); G.hitT = 0; noiseLevel = 0;
     spawnTrash(); friendGoto('eat'); vignette.classList.remove('danger');
     timerSub.textContent = '균승이 방으로 (살금 켜짐)'; setStatus('살금살금… 🤫');
@@ -892,7 +930,7 @@
     camera = new THREE.PerspectiveCamera(72, 1, 0.05, 60);
     const resize = () => { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
     window.addEventListener('resize', resize);
-    buildTextures(); await loadTextures(); friend.rig = await loadRig();
+    buildTextures(); await loadTextures(); friend.rig = await loadRig(); friend.walk = await loadWalk();
     if (!friend.tex.idle) { // 사진이 없으면 임시 스프라이트
       friend.tex.idle = friend.tex.phone = friend.tex.look = friend.tex.hit = friend.tex.taunt = friend.tex.chase0 = friend.tex.chase1 = makeTex(256, 512, (ctx, w, h) => { ctx.fillStyle = '#f3c9a6'; ctx.beginPath(); ctx.arc(128, 110, 80, 0, 7); ctx.fill(); ctx.fillStyle = '#222'; ctx.fillRect(40, 190, 176, 300); });
     }
