@@ -319,7 +319,6 @@
       bag: new THREE.MeshStandardMaterial({ map: TEX.bag, roughness: 0.6 }),
       can: new THREE.MeshStandardMaterial({ map: TEX.can, roughness: 0.3, metalness: 0.6 }),
       cup: new THREE.MeshStandardMaterial({ map: TEX.cup, roughness: 0.8 }),
-      creak: new THREE.MeshStandardMaterial({ map: TEX.wood, color: 0x9a8a7a, roughness: 0.6 }),
       startRing: new THREE.MeshBasicMaterial({ color: 0xffd33d, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
     };
     M.monitor.emissiveMap.colorSpace = THREE.SRGBColorSpace;
@@ -333,8 +332,8 @@
     plane(0.9, 0.6, M.mat, 1.7, 0.004, 10.4);      // 현관 매트
     plane(16, 11, M.ceiling, 8, 2.7, 5.5, Math.PI / 2);
     // 삐걱거리는 마루 (약간 다른 색)
-    const creakPatches = [[8.6, 7.3, 9.6, 8.7], [10.1, 4.4, 11.3, 5.6], [3.9, 1.7, 5.5, 2.5], [6.0, 5.8, 7.2, 6.6]];
-    for (const [x0, z0, x1, z1] of creakPatches) { plane(x1 - x0, z1 - z0, M.creak, (x0 + x1) / 2, 0.003, (z0 + z1) / 2); creaks.push({ x0, z0, x1, z1, t: 0 }); }
+    const creakPatches = [[8.6, 7.3, 9.6, 8.7], [10.1, 4.4, 11.3, 5.6], [3.9, 1.7, 5.5, 2.5]];
+    for (const [x0, z0, x1, z1] of creakPatches) creaks.push({ x0, z0, x1, z1, t: 0 });  // 보이지 않는 삐걱 구간 (문턱 근처)
 
     // ---- 벽 ----
     const W = M.wall;
@@ -346,8 +345,7 @@
     wall(3, 0.15, 3.15, 1.85, W);                                                     // 화장실 벽
     // 문짝들
     box(0.9, 2.1, 0.06, M.door, 1.6, 1.05, 1.95, false);          // 화장실 문 (닫힘)
-    box(0.06, 2.1, 0.95, M.door, 9.1, 1.05, 8.0, false);           // 거실-주방 사이 열린 문 (벽에 붙음)
-    const roomDoor = box(0.06, 2.1, 1.0, M.door, 10.2, 1.05, 5.5, true); roomDoor.rotation.y = 0;  // 균승이 방 문 (열린 채 벽쪽)
+    box(1.0, 2.1, 0.05, M.door, 9.7, 1.05, 4.78, false);           // 균승이 방 문 (활짝 열려 방 안쪽 벽에 붙음)
     const frontDoor = box(1.0, 2.1, 0.08, M.frontDoor, 1.7, 1.05, 10.85, false); frontDoor.name = 'frontDoor';
     box(0.04, 0.04, 0.2, M.metal, 2.1, 1.0, 10.78, false);         // 손잡이
     // 걸레받이
