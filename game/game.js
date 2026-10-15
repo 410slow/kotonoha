@@ -11,6 +11,14 @@
   const btnHit = $('#btnHit'), btnSneak = $('#btnSneak'), btnRun = $('#btnRun'), joy = $('#joy'), knob = $('#knob');
   const minimap = $('#minimap'), mctx = minimap.getContext('2d');
 
+  // ======================= 에셋 (단일 파일 빌드면 data URI) =======================
+  const EMBED = window.ENGMA_ASSETS || null;
+  function assetUrl(path) { return (EMBED && EMBED[path]) || ('./' + path); }
+  async function assetJson(path) {
+    if (EMBED) return EMBED[path] || null;                       // 단일 파일 빌드: 없으면 없는 것
+    try { const r = await fetch('./' + path); if (!r.ok) return null; return r.json(); } catch (_) { return null; }
+  }
+
   // ======================= 난이도 =======================
   const DIFF = {
     easy:   { label: '쉬움',   chase: 1.7, lookMin: 6,   lookMax: 10,  lookDurMin: 1.0, lookDurMax: 1.6, cue: 0.8,  suspicion: 1.7, trash: 14 },
@@ -185,11 +193,6 @@
       u.lang = 'ko-KR'; if (koVoice) u.voice = koVoice; u.pitch = 2; u.rate = kind === 'catch' ? 1.25 : 1.1; speechSynthesis.speak(u);
     } catch (_) {}
   }
-
-  // ======================= 에셋 (단일 파일 빌드면 data URI) =======================
-  const EMBED = window.ENGMA_ASSETS || null;
-  function assetUrl(path) { return (EMBED && EMBED[path]) || ('./' + path); }
-  async function assetJson(path) { if (EMBED && EMBED[path]) return EMBED[path]; const r = await fetch('./' + path); if (!r.ok) return null; return r.json(); }
 
   // ======================= 절차적 텍스처 =======================
   function makeTex(w, h, draw, repeatX = 1, repeatY = 1) {
