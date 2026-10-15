@@ -5,5 +5,14 @@ service cloud.firestore {
       allow read, create, update: if request.auth != null && request.auth.uid == userId;
       allow delete: if false;
     }
+    // 균승이 개패기 기록 (로그인 없이 읽기/추가만 허용)
+    match /engma_records/{recordId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['name', 'time', 'hitTime', 'diff', 'date'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 10
+        && request.resource.data.time is number && request.resource.data.time > 0 && request.resource.data.time < 3600
+        && request.resource.data.diff in ['easy', 'normal', 'hard'];
+      allow update, delete: if false;
+    }
   }
 }

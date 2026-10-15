@@ -4,718 +4,198 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
-  <title>엥마 - 친구 때리고 도망가기</title>
+  <title>균승이 개패기</title>
   <style>
+    /* 레이아웃: 전체 화면 3D 캔버스 위에 HUD(상단 타이머·상태), 소음/체력 미터, 하단 조작(조이스틱+버튼), 오버레이(시작/결과/기록).
+       단일 다크 테마(밤의 집). */
     :root {
-      --accent: #ffd33d;
-      --danger: #ff3b3b;
-      --ok: #4ade80;
+      --bg: #06070a; --fg: #f4f1ea; --accent: #ffd33d; --danger: #ff3b3b; --ok: #4ade80; --panel: rgba(8,9,12,.55);
+      --font-ui: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
+      color-scheme: dark;
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body {
-      margin: 0; height: 100%; overflow: hidden; background: #000; color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
-      touch-action: none; user-select: none; -webkit-user-select: none;
-    }
-    #stage { position: fixed; inset: 0; overflow: hidden; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); touch-action: none; user-select: none; -webkit-user-select: none; }
+    #stage { position: fixed; inset: 0; overflow: hidden; background: var(--bg); }
+    #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #stage.shake #gl { animation: shake .35s linear 1; }
+    @keyframes shake { 0%,100% { transform: translate(0,0);} 20% { transform: translate(-12px,6px);} 40% { transform: translate(10px,-8px);} 60% { transform: translate(-8px,4px);} 80% { transform: translate(6px,-3px);} }
+    #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: var(--danger); transition: opacity .12s; }
+    #vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.55) 100%); }
+    #vignette.danger { background: radial-gradient(ellipse at center, transparent 40%, rgba(180,0,0,.45) 100%); animation: pulse .6s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .55; } }
 
-    /* ---------- 현실 배경 (카메라) ---------- */
-    #cam {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; background: #111;
-    }
-    #cam.mirror { transform: scaleX(-1); }
-    #bgphoto {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; display: none;
-    }
-    #fallbackbg {
-      position: absolute; inset: 0; display: none;
-      background:
-        radial-gradient(ellipse at 50% 110%, #5a5f66 0%, #2b2e33 45%, #15171a 100%);
-    }
-    #fallbackbg::after {
-      content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 42%;
-      background: repeating-linear-gradient(90deg, rgba(255,255,255,.04) 0 2px, transparent 2px 70px),
-                  linear-gradient(#3a3d42, #202226);
-    }
-    #vignette {
-      position: absolute; inset: 0; pointer-events: none;
-      background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%);
-    }
-    #flash {
-      position: absolute; inset: 0; pointer-events: none; opacity: 0;
-      background: var(--danger); transition: opacity .12s;
-    }
+    /* 주먹 */
+    #fist { position: absolute; right: -40px; bottom: -60px; font-size: 170px; pointer-events: none; transform: rotate(-20deg); filter: drop-shadow(0 10px 10px rgba(0,0,0,.6)); }
+    #fist.punch { animation: punch .3s cubic-bezier(.2,1.2,.4,1) 1; }
+    @keyframes punch { 0% { transform: rotate(-20deg) translate(0,0) scale(1);} 40% { transform: rotate(-35deg) translate(-45vw,-40vh) scale(1.3);} 100% { transform: rotate(-20deg) translate(0,0) scale(1);} }
+    #stage.walk #fist { animation: bob .55s ease-in-out infinite; }
+    #stage.run #fist { animation: bob .3s ease-in-out infinite; }
+    @keyframes bob { 0%,100% { transform: rotate(-20deg) translateY(0);} 50% { transform: rotate(-22deg) translateY(-10px);} }
+    #crosshair { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,.7); pointer-events: none; box-shadow: 0 0 4px #000; }
 
-    /* ---------- 친구 ---------- */
-    #friendLayer { position: absolute; inset: 0; pointer-events: none; }
-    #friend {
-      position: absolute; left: 0; top: 0; width: 260px; height: 420px;
-      margin-left: -130px; margin-top: -420px;
-      transform-origin: 50% 100%;
-      pointer-events: auto; cursor: pointer;
-      will-change: transform;
-    }
-    #shadow {
-      position: absolute; left: 50%; bottom: -14px; width: 180px; height: 44px;
-      margin-left: -90px; border-radius: 50%;
-      background: radial-gradient(ellipse, rgba(0,0,0,.55) 0%, rgba(0,0,0,.25) 50%, transparent 72%);
-      filter: blur(2px);
-    }
-    #body {
-      position: absolute; left: 50%; bottom: 0; width: 230px; height: 230px; margin-left: -115px;
-      background: linear-gradient(180deg, #1f2327, #0c0e10);
-      border-radius: 110px 110px 24px 24px / 120px 120px 24px 24px;
-      box-shadow: inset 0 -30px 40px rgba(0,0,0,.6), inset 20px 0 30px rgba(255,255,255,.04);
-    }
-    #body::before { /* 목 */
-      content: ""; position: absolute; left: 50%; top: -34px; width: 74px; height: 60px; margin-left: -37px;
-      background: linear-gradient(180deg, #d9a683, #b98461);
-      border-radius: 20px 20px 30px 30px;
-      box-shadow: inset 0 -16px 18px rgba(0,0,0,.25);
-    }
-    #head {
-      position: absolute; left: 50%; bottom: 196px; width: 200px; height: 320px; margin-left: -100px;
-      transform-origin: 50% 90%;
-      animation: breathe 3.2s ease-in-out infinite;
-    }
-    #head.bob { animation: bob .55s ease-in-out infinite; }
-    #head.wobble { animation: wobble .6s cubic-bezier(.2,1.4,.4,1) 1; }
-    #head.shiver { animation: shiver .12s linear infinite; }
-    @keyframes breathe { 0%,100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-5px) rotate(1.2deg); } }
-    @keyframes bob { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
-    @keyframes wobble {
-      0% { transform: rotate(0) translateX(0); }
-      20% { transform: rotate(-16deg) translateX(-22px) scale(1.06,.94); }
-      45% { transform: rotate(11deg) translateX(14px) scale(.96,1.05); }
-      70% { transform: rotate(-5deg) translateX(-6px); }
-      100% { transform: rotate(0) translateX(0); }
-    }
-    @keyframes shiver { 0% { transform: translateX(-2px) rotate(-1deg);} 100% { transform: translateX(2px) rotate(1deg);} }
-
-    .face {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; object-position: 50% 20%;
-      border-radius: 50% / 48%;
-      opacity: 0; transition: opacity .18s ease;
-      filter: drop-shadow(0 12px 14px rgba(0,0,0,.45)) saturate(1.05) contrast(1.04);
-      pointer-events: none;
-    }
-    .face.on { opacity: 1; }
-    #angryTint {
-      position: absolute; inset: 0; border-radius: 50% / 48%;
-      background: radial-gradient(ellipse at 50% 60%, rgba(255,40,40,.45), rgba(255,0,0,.12) 60%, transparent 75%);
-      mix-blend-mode: multiply; opacity: 0; transition: opacity .3s;
-    }
-    #angryBrows {
-      position: absolute; left: 50%; top: 26%; width: 150px; height: 60px; margin-left: -75px;
-      opacity: 0; transition: opacity .2s; transform-origin: 50% 50%;
-    }
-    #veins {
-      position: absolute; right: 10%; top: 18%; width: 46px; height: 46px; opacity: 0; transition: opacity .2s;
-    }
-    #slap {
-      position: absolute; width: 110px; height: 110px; left: 40%; top: 45%; margin: -55px 0 0 -55px;
-      border-radius: 50%; opacity: 0; pointer-events: none;
-      background: radial-gradient(circle, rgba(255,60,60,.75) 0%, rgba(255,60,60,.4) 45%, transparent 70%);
-      mix-blend-mode: multiply;
-    }
-    #slap.show { animation: slapfade 1.4s ease-out 1; }
-    @keyframes slapfade { 0% { opacity: 1; transform: scale(.6);} 25% { opacity: 1; transform: scale(1.05);} 100% { opacity: 0; transform: scale(1); } }
-    #stars { position: absolute; left: 50%; top: 0; width: 0; height: 0; opacity: 0; }
-    #stars.show { opacity: 1; animation: starspin 1.2s linear 1 forwards; }
-    #stars span { position: absolute; font-size: 34px; transform: translate(-50%,-50%); text-shadow: 0 2px 4px rgba(0,0,0,.6); }
-    @keyframes starspin { from { transform: rotate(0); } to { transform: rotate(360deg); opacity: 0; } }
-    #sweat {
-      position: absolute; left: 14%; top: 36%; font-size: 30px; opacity: 0;
-    }
-    #sweat.show { animation: sweatdrop 1s ease-in infinite; }
-    @keyframes sweatdrop { 0% { opacity: 0; transform: translateY(0);} 20% { opacity: 1;} 100% { opacity: 0; transform: translateY(40px);} }
-    .steam {
-      position: absolute; top: -10px; width: 24px; height: 24px; border-radius: 50%;
-      background: rgba(255,255,255,.7); filter: blur(4px); opacity: 0;
-    }
-    #head.angry .steam { animation: steam 1.1s ease-out infinite; }
-    .steam:nth-child(1) { left: 18%; animation-delay: 0s !important; }
-    .steam:nth-child(2) { left: 70%; animation-delay: .4s !important; }
-    .steam:nth-child(3) { left: 44%; animation-delay: .8s !important; }
-    @keyframes steam { 0% { opacity: .8; transform: translateY(0) scale(.6);} 100% { opacity: 0; transform: translateY(-70px) scale(1.8);} }
-
-    #hitRing {
-      position: absolute; left: 50%; top: 40%; width: 280px; height: 280px; margin: -140px 0 0 -140px;
-      border: 5px solid var(--accent); border-radius: 50%; opacity: 0; pointer-events: none;
-      box-shadow: 0 0 24px rgba(255,211,61,.8), inset 0 0 24px rgba(255,211,61,.5);
-    }
-    #hitRing.on { opacity: 1; animation: ring .8s ease-in-out infinite; }
-    @keyframes ring { 0%,100% { transform: scale(1);} 50% { transform: scale(1.08);} }
-
-    #bubble {
-      position: absolute; left: 50%; bottom: 105%; transform: translateX(-50%) scale(0);
-      background: #fff; color: #111; font-weight: 800; font-size: 28px; padding: 12px 20px;
-      border-radius: 22px; white-space: nowrap; transform-origin: 50% 100%;
-      transition: transform .18s cubic-bezier(.2,1.6,.4,1); box-shadow: 0 6px 16px rgba(0,0,0,.4);
-    }
-    #bubble::after {
-      content: ""; position: absolute; left: 50%; bottom: -14px; margin-left: -10px;
-      border: 10px solid transparent; border-top-color: #fff; border-bottom: 0;
-    }
-    #bubble.on { transform: translateX(-50%) scale(1); }
-    #bubble.big { font-size: 40px; color: var(--danger); }
-
-    /* ---------- 플레이어 주먹 ---------- */
-    #fist {
-      position: absolute; right: -40px; bottom: -60px; font-size: 160px; pointer-events: none;
-      transform: rotate(-20deg) translate(0,0); filter: drop-shadow(0 10px 10px rgba(0,0,0,.5));
-      transition: transform .08s;
-    }
-    #fist.punch { animation: punch .28s cubic-bezier(.2,1.2,.4,1) 1; }
-    @keyframes punch {
-      0% { transform: rotate(-20deg) translate(0,0) scale(1);}
-      40% { transform: rotate(-35deg) translate(-42vw,-42vh) scale(1.35);}
-      100% { transform: rotate(-20deg) translate(0,0) scale(1);}
-    }
-    #stage.shake { animation: shake .35s linear 1; }
-    @keyframes shake {
-      0%,100% { transform: translate(0,0);} 20% { transform: translate(-12px,6px);}
-      40% { transform: translate(10px,-8px);} 60% { transform: translate(-8px,4px);} 80% { transform: translate(6px,-3px);}
-    }
-    #stage.walk #hud, #stage.walk #fist { animation: headbob .5s ease-in-out infinite; }
-    #stage.run #hud, #stage.run #fist { animation: headbob .28s ease-in-out infinite; }
-    @keyframes headbob { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-8px);} }
-
-    /* ---------- HUD ---------- */
-    #hud {
-      position: absolute; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 10px) 14px 8px;
-      display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none;
-      text-shadow: 0 2px 4px rgba(0,0,0,.8);
-    }
-    .pill { background: rgba(0,0,0,.45); backdrop-filter: blur(6px); border-radius: 14px; padding: 8px 12px; font-weight: 700; }
-    #score { font-size: 30px; line-height: 1; }
-    #score small { font-size: 13px; opacity: .8; display: block; margin-top: 4px; font-weight: 500; }
-    #lives { font-size: 24px; letter-spacing: 2px; }
-    #status {
-      position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 70px); transform: translateX(-50%);
-      font-size: 20px; font-weight: 800; text-align: center; pointer-events: none;
-      text-shadow: 0 2px 6px rgba(0,0,0,.9); white-space: nowrap;
-    }
+    /* HUD */
+    #hud { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; pointer-events: none;
+      padding-block: calc(env(safe-area-inset-top, 0px) + 10px) 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); text-shadow: 0 2px 4px rgba(0,0,0,.8); }
+    .pill { background: var(--panel); backdrop-filter: blur(6px); border-radius: 14px; padding: 8px 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #timer { font-size: 28px; line-height: 1; }
+    #timer small { display: block; font-size: 12px; opacity: .8; font-weight: 500; margin-top: 4px; }
+    #friendState { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    #friendState b { font-size: 22px; }
+    #topRight { display: flex; gap: 8px; pointer-events: auto; }
+    .icon { background: var(--panel); border: 0; color: var(--fg); border-radius: 12px; width: 42px; height: 42px; font-size: 20px; cursor: pointer; }
+    .icon:focus-visible, .btn:focus-visible, .bigbtn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    #status { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 76px); transform: translateX(-50%); font-size: 20px; font-weight: 800; text-align: center;
+      pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.95); white-space: nowrap; max-width: 95vw; }
     #status.alert { color: var(--danger); animation: blink .3s steps(2) infinite; }
     #status.good { color: var(--accent); }
     @keyframes blink { to { visibility: hidden; } }
+    #bubble { position: absolute; left: 50%; top: 32%; transform: translate(-50%,-50%) scale(0); background: #fff; color: #111; font-weight: 900; font-size: 34px; padding: 12px 22px; border-radius: 24px;
+      white-space: nowrap; transition: transform .18s cubic-bezier(.2,1.6,.4,1); box-shadow: 0 6px 16px rgba(0,0,0,.5); pointer-events: none; }
+    #bubble.on { transform: translate(-50%,-50%) scale(1); }
+    #bubble.big { font-size: 48px; color: var(--danger); }
 
-    #meters {
-      position: absolute; left: 14px; right: 14px; bottom: calc(env(safe-area-inset-bottom) + 118px);
-      pointer-events: none;
-    }
-    .meter { height: 10px; border-radius: 6px; background: rgba(0,0,0,.5); overflow: hidden; margin-top: 6px; }
-    .meter > i { display: block; height: 100%; width: 100%; border-radius: 6px; transition: width .08s linear; }
-    #distBar > i { background: linear-gradient(90deg, var(--danger), var(--accent), var(--ok)); }
+    #meters { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 124px); pointer-events: none;
+      padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .meter { height: 10px; border-radius: 6px; background: rgba(0,0,0,.55); overflow: hidden; margin-top: 4px; }
+    .meter > i { display: block; height: 100%; width: 0%; border-radius: 6px; transition: width .1s linear; }
+    #noiseBar > i { background: linear-gradient(90deg, var(--ok), var(--accent), var(--danger)); }
     #stamBar > i { background: linear-gradient(90deg, #60a5fa, #a78bfa); }
-    .meterLabel { font-size: 12px; font-weight: 700; opacity: .9; text-shadow: 0 1px 3px #000; display: flex; justify-content: space-between; }
+    .meterLabel { font-size: 12px; font-weight: 700; opacity: .9; text-shadow: 0 1px 3px #000; display: flex; justify-content: space-between; margin-top: 6px; }
 
-    #controls {
-      position: absolute; left: 0; right: 0; bottom: 0; padding: 0 14px calc(env(safe-area-inset-bottom) + 16px);
-      display: flex; gap: 12px;
-    }
-    .btn {
-      flex: 1; height: 88px; border-radius: 22px; border: 0; font-size: 22px; font-weight: 900; color: #111;
-      background: #fff; box-shadow: 0 6px 0 rgba(0,0,0,.35); cursor: pointer;
-      transition: transform .05s, box-shadow .05s; touch-action: none;
-    }
-    .btn small { display: block; font-size: 12px; font-weight: 600; opacity: .65; margin-top: 2px; }
-    .btn:active, .btn.down { transform: translateY(5px); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
-    #btnSneak { background: linear-gradient(180deg, #fff6c4, var(--accent)); }
+    /* 조작 */
+    #controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 10px; align-items: flex-end;
+      padding-block: 0 calc(env(safe-area-inset-bottom, 0px) + 14px); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    #joy { width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.10); border: 2px solid rgba(255,255,255,.25); position: relative; flex: none; touch-action: none; }
+    #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(255,255,255,.55); box-shadow: 0 4px 10px rgba(0,0,0,.4); }
+    #joy small { position: absolute; left: 0; right: 0; bottom: -18px; text-align: center; font-size: 11px; opacity: .7; }
+    #btns { flex: 1; min-width: 0; display: flex; gap: 10px; justify-content: flex-end; }
+    .btn { height: 76px; min-width: 96px; padding: 0 14px; border-radius: 20px; border: 0; font-size: 18px; font-weight: 900; color: #111; background: #fff; box-shadow: 0 6px 0 rgba(0,0,0,.4);
+      cursor: pointer; transition: transform .05s, box-shadow .05s; touch-action: none; font-family: inherit; }
+    .btn small { display: block; font-size: 11px; font-weight: 600; opacity: .65; margin-top: 2px; }
+    .btn:active, .btn.down { transform: translateY(5px); box-shadow: 0 1px 0 rgba(0,0,0,.4); }
+    #btnSneak { background: linear-gradient(180deg, #e6f5ff, #9ccfff); }
+    #btnSneak.on { background: linear-gradient(180deg, #fff6c4, var(--accent)); }
     #btnRun { background: linear-gradient(180deg, #ffd0d0, #ff7a7a); }
-    .btn[disabled] { opacity: .45; filter: grayscale(.6); }
+    #btnHit { background: linear-gradient(180deg, #fff2b8, #ffb340); font-size: 22px; }
+    #btnHit[hidden] { display: none !important; }
+    #lookHint { position: absolute; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 230px); font-size: 12px; opacity: .55; pointer-events: none; text-shadow: 0 1px 3px #000; }
 
-    #topRight { display: flex; gap: 8px; pointer-events: auto; }
-    .icon { background: rgba(0,0,0,.45); border: 0; color: #fff; border-radius: 12px; width: 42px; height: 42px; font-size: 20px; cursor: pointer; }
-
-    /* ---------- 오버레이 ---------- */
-    .overlay {
-      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: rgba(0,0,0,.72); backdrop-filter: blur(8px); text-align: center; padding: 24px; z-index: 10;
-    }
-    .overlay h1 { font-size: 44px; margin: 0 0 6px; letter-spacing: -1px; }
+    /* 오버레이 */
+    .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; overflow-y: auto;
+      background: rgba(4,5,8,.82); backdrop-filter: blur(10px); text-align: center;
+      padding-block: calc(env(safe-area-inset-top, 0px) + 20px) calc(env(safe-area-inset-bottom, 0px) + 20px); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .overlay h1 { font-size: 44px; margin: 0 0 4px; letter-spacing: -1.5px; text-wrap: balance; line-height: 1.1; }
     .overlay h1 span { color: var(--accent); }
-    .overlay p { max-width: 420px; line-height: 1.6; opacity: .9; margin: 8px 0; font-size: 15px; }
-    .overlay .bigbtn {
-      margin-top: 18px; padding: 18px 48px; font-size: 24px; font-weight: 900; border-radius: 999px; border: 0;
-      background: var(--accent); color: #111; cursor: pointer; box-shadow: 0 8px 0 #b48f00;
-    }
-    .overlay .bigbtn:active { transform: translateY(6px); box-shadow: 0 2px 0 #b48f00; }
-    .overlay .sub { margin-top: 14px; font-size: 13px; opacity: .7; }
-    .overlay .sub label { text-decoration: underline; cursor: pointer; color: var(--accent); }
-    .hidden { display: none !important; }
-    #previewFace {
-      width: 150px; height: 190px; object-fit: cover; object-position: 50% 20%; border-radius: 50% / 48%;
-      margin-bottom: 8px; filter: drop-shadow(0 10px 14px rgba(0,0,0,.6));
-      animation: breathe 3s ease-in-out infinite;
-    }
-    #result { font-size: 60px; font-weight: 900; color: var(--accent); margin: 6px 0; }
+    .overlay p { max-width: 440px; line-height: 1.6; opacity: .92; margin: 6px 0; font-size: 15px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+    .seg { display: inline-flex; background: rgba(255,255,255,.08); border-radius: 14px; padding: 4px; gap: 4px; }
+    .seg button { border: 0; background: transparent; color: var(--fg); font: inherit; font-weight: 700; padding: 10px 16px; border-radius: 11px; cursor: pointer; }
+    .seg button.on { background: var(--accent); color: #111; }
+    input[type=text] { font: inherit; font-weight: 700; font-size: 18px; padding: 12px 14px; border-radius: 12px; border: 2px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: var(--fg); width: 220px; text-align: center; }
+    input[type=text]:focus { outline: 0; border-color: var(--accent); }
+    .bigbtn { margin-top: 16px; padding: 18px 46px; font-size: 24px; font-weight: 900; border-radius: 999px; border: 0; background: var(--accent); color: #111; cursor: pointer; box-shadow: 0 8px 0 #b48f00; font-family: inherit; }
+    .bigbtn:active { transform: translateY(6px); box-shadow: 0 2px 0 #b48f00; }
+    .bigbtn.secondary { background: rgba(255,255,255,.14); color: var(--fg); box-shadow: 0 8px 0 rgba(0,0,0,.5); font-size: 18px; padding: 14px 30px; }
+    .sub { margin-top: 12px; font-size: 13px; opacity: .7; }
     kbd { background: #222; border: 1px solid #555; border-radius: 6px; padding: 1px 6px; font-size: 12px; }
+    #previewFace { width: 150px; height: 190px; object-fit: cover; object-position: 50% 15%; border-radius: 50% / 48%; filter: drop-shadow(0 10px 14px rgba(0,0,0,.6)); animation: breathe 3s ease-in-out infinite; }
+    @keyframes breathe { 0%,100% { transform: translateY(0) rotate(-1deg);} 50% { transform: translateY(-5px) rotate(1.2deg);} }
+    #loading { font-size: 13px; opacity: .7; margin-top: 10px; min-height: 18px; }
+    #result { font-size: 64px; font-weight: 900; color: var(--accent); margin: 4px 0; font-variant-numeric: tabular-nums; letter-spacing: -2px; }
+    #resultSub { font-size: 15px; opacity: .85; }
+    table { border-collapse: collapse; margin-top: 12px; width: min(440px, 100%); font-variant-numeric: tabular-nums; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.12); font-size: 14px; }
+    th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; font-weight: 700; }
+    td.num { text-align: right; }
+    tr.me td { color: var(--accent); font-weight: 800; }
+    .tableWrap { width: min(440px, 100%); overflow-x: auto; max-height: 36vh; overflow-y: auto; }
+    #overFace { width: 150px; height: 190px; object-fit: cover; object-position: 50% 15%; border-radius: 50% / 48%; }
+    .minimapWrap { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 120px); pointer-events: none; opacity: .85; }
+    #minimap { width: 96px; height: 66px; border-radius: 8px; background: rgba(0,0,0,.45); }
+    @media (max-width: 420px) { .overlay h1 { font-size: 36px; } #timer { font-size: 22px; } .btn { min-width: 80px; height: 70px; font-size: 16px; } }
+    @media (prefers-reduced-motion: reduce) { #stage.walk #fist, #stage.run #fist, #vignette.danger { animation: none; } }
   </style>
 </head>
 <body>
 <div id="stage">
-  <!-- 현실 배경 -->
-  <video id="cam" autoplay muted playsinline></video>
-  <img id="bgphoto" alt="" />
-  <div id="fallbackbg"></div>
+  <canvas id="gl"></canvas>
   <div id="vignette"></div>
-
-  <!-- 친구 -->
-  <div id="friendLayer">
-    <div id="friend">
-      <div id="shadow"></div>
-      <div id="body"></div>
-      <div id="head">
-        <span class="steam"></span><span class="steam"></span><span class="steam"></span>
-        <img class="face" data-expr="idle"  src="./assets/idle.png"  alt="" />
-        <img class="face" data-expr="bonus" src="./assets/bonus.png" alt="" />
-        <img class="face" data-expr="hit"   src="./assets/hit.png"   alt="" />
-        <img class="face" data-expr="taunt" src="./assets/taunt.png" alt="" />
-        <img class="face" data-expr="chase" src="./assets/chase.png" alt="" />
-        <div id="angryTint"></div>
-        <svg id="angryBrows" viewBox="0 0 150 60">
-          <path d="M8 8 L62 34" stroke="#1a1210" stroke-width="11" stroke-linecap="round"/>
-          <path d="M142 8 L88 34" stroke="#1a1210" stroke-width="11" stroke-linecap="round"/>
-        </svg>
-        <svg id="veins" viewBox="0 0 46 46">
-          <g fill="none" stroke="#d11" stroke-width="5" stroke-linecap="round">
-            <path d="M6 18 Q23 16 23 6"/><path d="M23 6 Q23 16 40 18"/>
-            <path d="M6 28 Q23 30 23 40"/><path d="M23 40 Q23 30 40 28"/>
-          </g>
-        </svg>
-        <div id="slap"></div>
-        <div id="sweat">💧</div>
-        <div id="stars">
-          <span style="left:-70px;top:-10px">⭐</span><span style="left:70px;top:-10px">⭐</span>
-          <span style="left:0;top:-60px">💫</span><span style="left:0;top:40px">✨</span>
-        </div>
-      </div>
-      <div id="hitRing"></div>
-      <div id="bubble"></div>
-    </div>
-  </div>
-
   <div id="flash"></div>
+  <div id="crosshair"></div>
   <div id="fist">👊</div>
+  <div id="bubble"></div>
 
-  <!-- HUD -->
   <div id="hud">
-    <div class="pill" id="score">0<small>엥마 포인트 · 최고 <b id="best">0</b></small></div>
-    <div id="topRight">
-      <div class="pill" id="lives">❤️❤️❤️</div>
-      <button class="icon" id="btnFlip" title="카메라 전환">🔄</button>
-      <button class="icon" id="btnMute" title="소리">🔊</button>
-    </div>
+    <div class="pill" id="timer">0.00<small id="timerSub">현관에서 출발</small></div>
+    <div class="pill" id="friendState"><b id="friendIcon">🍗</b><span id="friendText">밥 먹는 중</span></div>
+    <div id="topRight"><button class="icon" id="btnMute" title="소리" aria-label="소리 켜기/끄기">🔊</button></div>
   </div>
   <div id="status"></div>
+  <div class="minimapWrap"><canvas id="minimap" width="192" height="132"></canvas></div>
 
   <div id="meters">
-    <div class="meterLabel"><span>친구와의 거리</span><span id="distText"></span></div>
-    <div class="meter" id="distBar"><i></i></div>
-    <div class="meterLabel"><span>체력</span><span id="stamText"></span></div>
+    <div class="meterLabel"><span>소음</span><span id="noiseText">조용함</span></div>
+    <div class="meter" id="noiseBar"><i></i></div>
+    <div class="meterLabel"><span>체력</span><span id="stamText">100%</span></div>
     <div class="meter" id="stamBar"><i></i></div>
   </div>
+  <div id="lookHint">오른쪽 화면 드래그 = 둘러보기</div>
 
   <div id="controls">
-    <button class="btn" id="btnSneak">🚶 살금살금<small>꾹 누르고 다가가기 (W)</small></button>
-    <button class="btn" id="btnRun">🏃 도망!<small>꾹 누르고 도망 (Space)</small></button>
+    <div id="joy"><div id="knob"></div><small>이동</small></div>
+    <div id="btns">
+      <button class="btn" id="btnHit" hidden>👊 때리기<small>E</small></button>
+      <button class="btn" id="btnSneak">🤫 살금<small>켜짐/꺼짐 (Shift)</small></button>
+      <button class="btn" id="btnRun">🏃 달리기<small>꾹 (Space)</small></button>
+    </div>
   </div>
 
   <!-- 시작 화면 -->
   <div class="overlay" id="startOverlay">
-    <img id="previewFace" src="./assets/idle.png" alt="" />
-    <h1>친구 <span>때리고</span> 도망가기</h1>
-    <p>카메라를 켜면 <b>지금 내가 있는 현실 공간</b>에 친구가 나타납니다.<br/>
-      <b>살금살금</b> 다가가서 친구가 커졌을 때 <b>얼굴을 탭</b>해서 때리세요.<br/>
-      친구가 뒤돌아볼 때 움직이면 들킵니다 👀<br/>
-      맞은 친구는 <b>"엥마~"</b> 하고 쫓아옵니다. <b>도망!</b> 버튼을 꾹 눌러 도망치세요.</p>
-    <button class="bigbtn" id="btnStart">▶ 시작 (카메라 켜기)</button>
-    <div class="sub">카메라가 안 되면 <label for="bgFile">배경 사진 선택</label>으로 플레이 ·
-      PC: <kbd>W</kbd> 살금살금 <kbd>Space</kbd> 도망 · 클릭 = 때리기</div>
-    <input type="file" id="bgFile" accept="image/*" class="hidden" />
+    <img id="previewFace" src="./assets/friend_hit.png" alt="" />
+    <h1>균승이 <span>개패기</span></h1>
+    <p>균승이가 방에서 먹방을 찍고 있습니다. 현관에서 출발해 <b>소리 안 나게</b> 다가가서 한 대 때리고, <b>현관까지 돌아오면</b> 성공.<br/>
+      바닥의 치킨 박스·캔을 밟으면 소리가 납니다. 균승이가 <b>고개를 들 때(👀)</b> 움직이면 들킵니다.</p>
+    <div class="row">
+      <input type="text" id="playerName" maxlength="10" placeholder="아이디 (기록용)" autocomplete="off" />
+    </div>
+    <div class="row">
+      <div class="seg" id="diffSeg">
+        <button data-diff="easy">쉬움</button><button data-diff="normal" class="on">보통</button><button data-diff="hard">어려움</button>
+      </div>
+    </div>
+    <button class="bigbtn" id="btnStart">▶ 시작</button>
+    <div class="row"><button class="bigbtn secondary" id="btnRecords">🏆 기록 보기</button></div>
+    <div class="sub">폰: 왼쪽 조이스틱 이동, 오른쪽 드래그 둘러보기 · PC: <kbd>WASD</kbd> 이동, 마우스 둘러보기, <kbd>Shift</kbd> 살금, <kbd>Space</kbd> 달리기, <kbd>E</kbd>/클릭 때리기</div>
+    <div id="loading"></div>
   </div>
 
-  <!-- 게임 오버 -->
-  <div class="overlay hidden" id="overOverlay">
-    <img id="overFace" src="./assets/taunt.png" alt="" style="width:150px;height:190px;object-fit:cover;object-position:50% 20%;border-radius:50%/48%;" />
-    <h1>엥마~ <span>잡혔다</span></h1>
-    <div id="result">0</div>
-    <p id="overText">친구에게 세 번 잡혔습니다.</p>
-    <button class="bigbtn" id="btnRetry">다시 하기</button>
+  <!-- 결과 화면 -->
+  <div class="overlay" id="overOverlay" hidden>
+    <img id="overFace" src="./assets/friend_taunt.png" alt="" />
+    <h1 id="overTitle">엥마~ <span>잡혔다</span></h1>
+    <div id="result">0.00</div>
+    <div id="resultSub"></div>
+    <div class="tableWrap"><table id="recordTable"><thead><tr><th>#</th><th>아이디</th><th>난이도</th><th class="num">기록</th></tr></thead><tbody></tbody></table></div>
+    <div class="row">
+      <button class="bigbtn" id="btnRetry">다시 하기</button>
+      <button class="bigbtn secondary" id="btnHome">처음으로</button>
+    </div>
+  </div>
+
+  <!-- 기록 화면 -->
+  <div class="overlay" id="recordsOverlay" hidden>
+    <h1>🏆 <span>기록</span></h1>
+    <p id="recordsNote">성공한 판만 기록됩니다. 기록은 이 기기에 저장됩니다.</p>
+    <div class="tableWrap"><table id="recordTable2"><thead><tr><th>#</th><th>아이디</th><th>난이도</th><th class="num">기록</th></tr></thead><tbody></tbody></table></div>
+    <div class="row"><button class="bigbtn secondary" id="btnRecordsClose">닫기</button></div>
   </div>
 </div>
 
-<script>
-(() => {
-  'use strict';
-  const $ = (s) => document.querySelector(s);
-  const stage = $('#stage'), cam = $('#cam'), bgphoto = $('#bgphoto'), fallbackbg = $('#fallbackbg');
-  const friend = $('#friend'), head = $('#head'), faces = [...document.querySelectorAll('.face')];
-  const bubble = $('#bubble'), hitRing = $('#hitRing'), slap = $('#slap'), stars = $('#stars'), sweat = $('#sweat');
-  const angryTint = $('#angryTint'), angryBrows = $('#angryBrows'), veins = $('#veins');
-  const fist = $('#fist'), flash = $('#flash'), statusEl = $('#status');
-  const scoreEl = $('#score'), bestEl = $('#best'), livesEl = $('#lives');
-  const distBar = $('#distBar > i'), stamBar = $('#stamBar > i'), distText = $('#distText'), stamText = $('#stamText');
-  const btnSneak = $('#btnSneak'), btnRun = $('#btnRun');
-
-  // ======================= 오디오 (WebAudio 합성 + 음성) =======================
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  let actx = null, master = null, muted = false;
-  function initAudio() {
-    if (actx) return;
-    actx = new AudioCtx();
-    master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
-  }
-  function noiseBuffer(sec) {
-    const b = actx.createBuffer(1, Math.floor(actx.sampleRate * sec), actx.sampleRate);
-    const d = b.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    return b;
-  }
-  let stepSide = 1;
-  // 걷는 소리: 짧은 노이즈 + 둔탁한 저음, 좌우 번갈아가며
-  function footstep(run) {
-    if (!actx || muted) return;
-    const t = actx.currentTime;
-    const src = actx.createBufferSource(); src.buffer = noiseBuffer(0.12);
-    const bp = actx.createBiquadFilter(); bp.type = 'bandpass';
-    bp.frequency.value = run ? 520 + Math.random() * 200 : 300 + Math.random() * 140; bp.Q.value = 0.9;
-    const g = actx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(run ? 0.9 : 0.55, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + (run ? 0.11 : 0.16));
-    const pan = actx.createStereoPanner ? actx.createStereoPanner() : null;
-    stepSide = -stepSide; if (pan) pan.pan.value = stepSide * 0.5;
-    const thump = actx.createOscillator(); thump.type = 'sine';
-    thump.frequency.setValueAtTime(run ? 150 : 110, t); thump.frequency.exponentialRampToValueAtTime(45, t + 0.12);
-    const tg = actx.createGain();
-    tg.gain.setValueAtTime(run ? 0.7 : 0.45, t); tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
-    src.connect(bp).connect(g); thump.connect(tg);
-    if (pan) { g.connect(pan); tg.connect(pan); pan.connect(master); } else { g.connect(master); tg.connect(master); }
-    src.start(t); thump.start(t); src.stop(t + 0.2); thump.stop(t + 0.2);
-  }
-  function punchSound() {
-    if (!actx || muted) return;
-    const t = actx.currentTime;
-    const src = actx.createBufferSource(); src.buffer = noiseBuffer(0.25);
-    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(2500, t); lp.frequency.exponentialRampToValueAtTime(200, t + 0.2);
-    const g = actx.createGain(); g.gain.setValueAtTime(1.2, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
-    const o = actx.createOscillator(); o.type = 'triangle'; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.2);
-    const og = actx.createGain(); og.gain.setValueAtTime(1, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-    src.connect(lp).connect(g).connect(master); o.connect(og).connect(master);
-    src.start(t); o.start(t); src.stop(t + 0.3); o.stop(t + 0.3);
-  }
-  function whoosh() {
-    if (!actx || muted) return;
-    const t = actx.currentTime;
-    const src = actx.createBufferSource(); src.buffer = noiseBuffer(0.3);
-    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2;
-    bp.frequency.setValueAtTime(400, t); bp.frequency.exponentialRampToValueAtTime(3000, t + 0.18);
-    const g = actx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-    src.connect(bp).connect(g).connect(master); src.start(t); src.stop(t + 0.32);
-  }
-  function alarm() { // 들켰을 때 "띠용"
-    if (!actx || muted) return;
-    const t = actx.currentTime;
-    const o = actx.createOscillator(); o.type = 'square';
-    o.frequency.setValueAtTime(880, t); o.frequency.setValueAtTime(660, t + 0.09); o.frequency.setValueAtTime(880, t + 0.18); o.frequency.setValueAtTime(660, t + 0.27);
-    const g = actx.createGain(); g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
-    o.connect(g).connect(master); o.start(t); o.stop(t + 0.42);
-  }
-  function heartbeat() {
-    if (!actx || muted) return;
-    const t = actx.currentTime;
-    for (const dt of [0, 0.14]) {
-      const o = actx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(70, t + dt); o.frequency.exponentialRampToValueAtTime(40, t + dt + 0.1);
-      const g = actx.createGain(); g.gain.setValueAtTime(0.5, t + dt); g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.12);
-      o.connect(g).connect(master); o.start(t + dt); o.stop(t + dt + 0.14);
-    }
-  }
-
-  // ---- "엥마" 음성: /voice/engma.mp3 가 있으면 실제 친구 목소리, 없으면 TTS ----
-  const voiceFiles = { hit: './voice/engma.mp3', catch: './voice/engma_catch.mp3' };
-  const voiceClips = {};
-  async function probeVoice(kind) {
-    try {
-      const r = await fetch(voiceFiles[kind], { method: 'HEAD' });
-      const ct = r.headers.get('content-type') || '';
-      if (r.ok && ct.startsWith('audio')) { const a = new Audio(voiceFiles[kind]); a.preload = 'auto'; voiceClips[kind] = a; }
-    } catch (_) { /* 없음 */ }
-  }
-  probeVoice('hit'); probeVoice('catch');
-
-  let koVoice = null;
-  function pickVoice() {
-    if (!('speechSynthesis' in window)) return;
-    const vs = speechSynthesis.getVoices();
-    koVoice = vs.find(v => /ko/i.test(v.lang) && /female|yuna|sora|heami|여/i.test(v.name))
-           || vs.find(v => /ko/i.test(v.lang)) || null;
-  }
-  if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-
-  const ENGMA_LINES = ['엥마~', '엥~마!', '엥마 엥마~', '에엥마~'];
-  function sayEngma(kind) {
-    if (muted) return;
-    const clip = voiceClips[kind] || voiceClips.hit;
-    if (clip) { try { clip.currentTime = 0; clip.playbackRate = kind === 'catch' ? 1.05 : 1; clip.play(); } catch (_) {} return; }
-    if (!('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(kind === 'catch' ? '엥마! 잡았지롱~' : ENGMA_LINES[Math.floor(Math.random() * ENGMA_LINES.length)]);
-    u.lang = 'ko-KR'; if (koVoice) u.voice = koVoice;
-    u.pitch = 2; u.rate = kind === 'catch' ? 1.25 : 1.1; u.volume = 1;   // 높고 빠르게 = 얄미운 톤
-    speechSynthesis.speak(u);
-  }
-
-  // ======================= 카메라 (현실 배경) =======================
-  let stream = null, facing = 'environment';
-  async function startCamera() {
-    stopCamera();
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-      cam.srcObject = stream; await cam.play().catch(() => {});
-      cam.classList.toggle('mirror', facing === 'user');
-      cam.style.display = ''; fallbackbg.style.display = 'none'; bgphoto.style.display = 'none';
-      return true;
-    } catch (e) {
-      console.warn('camera failed', e);
-      return false;
-    }
-  }
-  function stopCamera() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
-  function useFallbackBg() { cam.style.display = 'none'; if (bgphoto.src) bgphoto.style.display = 'block'; else fallbackbg.style.display = 'block'; }
-  $('#bgFile').addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0]; if (!f) return;
-    bgphoto.src = URL.createObjectURL(f); bgphoto.style.display = 'block'; cam.style.display = 'none'; fallbackbg.style.display = 'none';
-    $('#btnStart').textContent = '▶ 시작 (사진 배경)'; noCamera = true;
-  });
-  let noCamera = false;
-  $('#btnFlip').addEventListener('click', async () => { facing = facing === 'user' ? 'environment' : 'user'; if (!(await startCamera())) useFallbackBg(); });
-  $('#btnMute').addEventListener('click', (e) => { muted = !muted; e.currentTarget.textContent = muted ? '🔇' : '🔊'; if (muted && 'speechSynthesis' in window) speechSynthesis.cancel(); });
-
-  // ======================= 게임 상태 =======================
-  const G = {
-    running: false, state: 'wander', // wander | hitstun | chase | caught | over
-    dist: 0.9,       // 0 = 코앞, 1 = 멀리
-    x: 0,            // -1 ~ 1 화면 가로 위치
-    vx: 0,
-    stamina: 100,
-    score: 0, lives: 3, best: Number(localStorage.getItem('engma_best') || 0),
-    sneaking: false, runningBtn: false,
-    alertStart: 0, alertUntil: 0, nextAlert: 0, // 뒤돌아보기
-    stepT: 0, stateT: 0, bonusUntil: 0,
-    caughtCount: 0,
-  };
-  bestEl.textContent = G.best;
-
-  function setFace(name) { faces.forEach(f => f.classList.toggle('on', f.dataset.expr === name)); }
-  let bubbleTimer = 0;
-  function say(text, ms = 1400, big = false) {
-    bubble.textContent = text; bubble.classList.toggle('big', big); bubble.classList.add('on');
-    clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => bubble.classList.remove('on'), ms);
-  }
-  function setStatus(text, cls = '') { statusEl.textContent = text; statusEl.className = cls; }
-  function setAngry(on) {
-    head.classList.toggle('angry', on);
-    angryTint.style.opacity = on ? 1 : 0; angryBrows.style.opacity = on ? 1 : 0; veins.style.opacity = on ? 1 : 0;
-  }
-  function updateHud() {
-    scoreEl.firstChild.nodeValue = G.score;
-    livesEl.textContent = '❤️'.repeat(G.lives) + '🖤'.repeat(Math.max(0, 3 - G.lives));
-    distBar.style.width = (G.dist * 100) + '%';
-    stamBar.style.width = G.stamina + '%';
-    distText.textContent = G.dist < 0.25 ? '사정거리!' : G.dist < 0.5 ? '가까움' : G.dist < 0.8 ? '보통' : '멀리';
-    stamText.textContent = Math.round(G.stamina) + '%';
-  }
-
-  // ---- 상태 전환 ----
-  function toWander(fromEscape) {
-    G.state = 'wander'; G.stateT = 0;
-    G.dist = fromEscape ? 0.95 : 0.85; G.x = (Math.random() * 1.2 - 0.6); G.vx = (Math.random() < 0.5 ? -1 : 1) * 0.12;
-    G.nextAlert = 2.5 + Math.random() * 3;
-    setAngry(false); setFace('idle'); head.className = ''; sweat.classList.remove('show');
-    btnSneak.disabled = false; btnRun.disabled = true;
-    setStatus('살금살금 다가가세요 🤫');
-  }
-  function startChase(reason) {
-    G.state = 'chase'; G.stateT = 0;
-    setAngry(true); setFace('chase'); head.className = 'bob angry'; hitRing.classList.remove('on');
-    btnSneak.disabled = true; btnRun.disabled = false;
-    stage.classList.remove('walk');
-    setStatus(reason === 'spotted' ? '들켰다! 도망쳐!! 🏃💨' : '쫓아온다! 도망쳐!! 🏃💨', 'alert');
-    heartbeat();
-  }
-  function doHit() {
-    G.state = 'hitstun'; G.stateT = 0; G.score++;
-    if (G.score > G.best) { G.best = G.score; localStorage.setItem('engma_best', G.best); bestEl.textContent = G.best; }
-    punchSound();
-    fist.classList.remove('punch'); void fist.offsetWidth; fist.classList.add('punch');
-    stage.classList.remove('shake'); void stage.offsetWidth; stage.classList.add('shake');
-    setFace('hit'); setAngry(false); hitRing.classList.remove('on');
-    head.className = 'wobble';
-    slap.style.left = (30 + Math.random() * 40) + '%'; slap.style.top = (40 + Math.random() * 20) + '%';
-    slap.classList.remove('show'); void slap.offsetWidth; slap.classList.add('show');
-    stars.classList.remove('show'); void stars.offsetWidth; stars.classList.add('show');
-    say('퍽!!', 700);
-    G.dist = Math.max(G.dist, 0.12);
-    setStatus('+1 엥마 포인트!', 'good');
-    // 0.55초 후 얄밉게 "엥마~" → 추격 시작
-    setTimeout(() => {
-      if (G.state !== 'hitstun') return;
-      setFace('taunt'); say('엥마~', 1300, true); sayEngma('hit'); head.className = 'shiver';
-      setTimeout(() => { if (G.state === 'hitstun') startChase('hit'); }, 900);
-    }, 550);
-  }
-  function doCaught() {
-    G.state = 'caught'; G.stateT = 0; G.lives--; G.caughtCount++;
-    setAngry(false); setFace('taunt'); head.className = 'shiver';
-    flash.style.opacity = .7; setTimeout(() => flash.style.opacity = 0, 180);
-    stage.classList.remove('shake'); void stage.offsetWidth; stage.classList.add('shake');
-    punchSound(); say('엥마!!', 1800, true); sayEngma('catch');
-    setStatus('잡혔다… 😵', 'alert');
-    btnSneak.disabled = true; btnRun.disabled = true; stage.classList.remove('run');
-    updateHud();
-    setTimeout(() => { if (G.lives <= 0) gameOver(); else toWander(false); }, 2000);
-  }
-  function gameOver() {
-    G.state = 'over'; G.running = false; stage.classList.remove('run', 'walk');
-    $('#result').textContent = G.score + ' 엥마';
-    $('#overText').textContent = G.score >= G.best && G.score > 0 ? '최고 기록! 친구가 당신을 노려보고 있습니다.' : '친구에게 세 번 잡혔습니다. 엥마~';
-    $('#overOverlay').classList.remove('hidden');
-  }
-
-  // ---- 입력 ----
-  function bindHold(btn, on, off) {
-    const down = (e) => { e.preventDefault(); if (btn.disabled) return; btn.classList.add('down'); on(); };
-    const up = (e) => { e && e.preventDefault(); btn.classList.remove('down'); off(); };
-    btn.addEventListener('pointerdown', down);
-    btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up); btn.addEventListener('pointerleave', up);
-  }
-  bindHold(btnSneak, () => G.sneaking = true, () => G.sneaking = false);
-  bindHold(btnRun, () => G.runningBtn = true, () => G.runningBtn = false);
-  window.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    if (e.code === 'KeyW' || e.code === 'ArrowUp') { G.sneaking = true; btnSneak.classList.add('down'); }
-    if (e.code === 'Space' || e.code === 'KeyS' || e.code === 'ArrowDown') { G.runningBtn = true; btnRun.classList.add('down'); e.preventDefault(); }
-  });
-  window.addEventListener('keyup', (e) => {
-    if (e.code === 'KeyW' || e.code === 'ArrowUp') { G.sneaking = false; btnSneak.classList.remove('down'); }
-    if (e.code === 'Space' || e.code === 'KeyS' || e.code === 'ArrowDown') { G.runningBtn = false; btnRun.classList.remove('down'); }
-  });
-  // 친구 탭 = 때리기
-  friend.addEventListener('pointerdown', (e) => {
-    e.stopPropagation(); if (!G.running) return;
-    if (G.state === 'wander' && G.dist < 0.25) doHit();
-    else if (G.state === 'wander') { whoosh(); fist.classList.remove('punch'); void fist.offsetWidth; fist.classList.add('punch'); say('안 닿아~', 800); }
-  });
-  stage.addEventListener('pointerdown', (e) => {
-    if (!G.running || e.target.closest('button') || e.target.closest('.overlay')) return;
-    if (G.state === 'wander') { whoosh(); fist.classList.remove('punch'); void fist.offsetWidth; fist.classList.add('punch'); }
-  });
-
-  // ---- 기기 기울기 패럴랙스 (선택) ----
-  let tiltX = 0;
-  window.addEventListener('deviceorientation', (e) => { if (e.gamma != null) tiltX = Math.max(-1, Math.min(1, e.gamma / 45)); });
-
-  // ======================= 메인 루프 =======================
-  let last = 0;
-  function loop(ts) {
-    if (!G.running) return;
-    const dt = Math.min(0.05, (ts - last) / 1000 || 0); last = ts;
-    G.stateT += dt;
-    const W = stage.clientWidth, H = stage.clientHeight;
-
-    let moving = false, run = false;
-
-    if (G.state === 'wander') {
-      // 친구는 천천히 멀어지며 좌우로 어슬렁
-      G.dist = Math.min(1, G.dist + 0.025 * dt);
-      G.x += G.vx * dt; if (Math.abs(G.x) > 0.7) { G.x = Math.sign(G.x) * 0.7; G.vx = -G.vx; }
-      // 뒤돌아보기 타이머
-      G.nextAlert -= dt;
-      const alert = G.alertUntil > G.stateT;
-      if (!alert && G.nextAlert <= 0) {
-        G.alertStart = G.stateT; G.alertUntil = G.stateT + 1.1 + Math.random() * 0.6; G.nextAlert = 2.2 + Math.random() * 3.5;
-        setFace('chase'); say('👀 뭐야?', 1000); setStatus('멈춰!! 👀', 'alert'); head.className = '';
-      } else if (alert && G.alertUntil - G.stateT < dt) {
-        // 돌아보기 종료
-        const bonus = Math.random() < 0.3; setFace(bonus ? 'bonus' : 'idle');
-        if (bonus) { G.bonusUntil = G.stateT + 2.5; say('🍖 냠냠', 900); }
-        setStatus('살금살금 다가가세요 🤫');
-      } else if (!alert && G.bonusUntil && G.stateT > G.bonusUntil) { G.bonusUntil = 0; setFace('idle'); }
-
-      if (G.sneaking) {
-        moving = true;
-        // 뒤돌아본 직후 0.4초는 반응할 시간을 줌
-        const spotted = alert && (G.stateT - G.alertStart) > 0.4;
-        if (spotted) { startChase('spotted'); say('딱 걸렸어!', 1200, true); alarm(); }
-        else G.dist = Math.max(0, G.dist - 0.16 * dt);
-      }
-      hitRing.classList.toggle('on', G.dist < 0.25 && !alert);
-      if (G.dist < 0.25 && !alert) setStatus('지금이야! 얼굴을 탭!! 👊', 'good');
-      G.stamina = Math.min(100, G.stamina + 18 * dt);
-    }
-    else if (G.state === 'chase') {
-      const speed = 0.17 + Math.min(0.2, G.score * 0.02);
-      G.dist -= speed * dt;
-      G.x += (0 - G.x) * 1.5 * dt; // 정면으로 달려듦
-      if (G.runningBtn && G.stamina > 0) {
-        moving = true; run = true;
-        G.dist += 0.42 * dt; G.stamina = Math.max(0, G.stamina - 30 * dt);
-        if (G.stamina <= 0) say('헉헉…', 600);
-      } else {
-        G.stamina = Math.min(100, G.stamina + 10 * dt);
-      }
-      sweat.classList.toggle('show', G.dist < 0.35);
-      if (G.dist >= 1) {
-        // 도망 성공
-        G.dist = 1; say('다음엔 각오해~ 😤', 1600); setFace('chase'); setAngry(false);
-        G.state = 'cooldown'; G.stateT = 0; btnRun.disabled = true; stage.classList.remove('run');
-        setStatus('도망 성공! 🎉', 'good');
-        setTimeout(() => { if (G.state === 'cooldown') toWander(true); }, 1500);
-      } else if (G.dist <= 0.02) { G.dist = 0.02; doCaught(); }
-    }
-    else if (G.state === 'hitstun') {
-      G.stamina = Math.min(100, G.stamina + 25 * dt);
-    }
-
-    // 발소리 (걷기/뛰기 리듬)
-    stage.classList.toggle('walk', moving && !run); stage.classList.toggle('run', run);
-    if (moving) {
-      G.stepT -= dt;
-      if (G.stepT <= 0) { footstep(run); G.stepT = run ? 0.27 : 0.5; }
-    } else G.stepT = 0.05;
-
-    // ---- 친구 그리기: 거리 → 크기/위치 ----
-    const near = 1 - G.dist;                       // 0 멀리 ~ 1 코앞
-    const scale = 0.22 + Math.pow(near, 1.7) * 2.1;  // 멀면 작고 가까우면 화면 가득
-    const px = W * (0.5 + G.x * 0.42 + tiltX * 0.04 * (1 - near));
-    const py = H * (0.52 + near * 0.55);             // 가까울수록 아래(발 위치)
-    friend.style.transform = `translate(${px}px, ${py}px) scale(${scale})`;
-    friend.style.zIndex = Math.round(near * 10);
-
-    updateHud();
-    requestAnimationFrame(loop);
-  }
-
-  // ======================= 시작 / 재시작 =======================
-  async function begin() {
-    initAudio(); if (actx.state === 'suspended') actx.resume();
-    if ('speechSynthesis' in window) { pickVoice(); }
-    if (!noCamera) { const ok = await startCamera(); if (!ok) useFallbackBg(); } else useFallbackBg();
-    $('#startOverlay').classList.add('hidden'); $('#overOverlay').classList.add('hidden');
-    G.score = 0; G.lives = 3; G.stamina = 100; G.running = true;
-    toWander(false); updateHud();
-    last = performance.now(); requestAnimationFrame(loop);
-  }
-  $('#btnStart').addEventListener('click', begin);
-  $('#btnRetry').addEventListener('click', begin);
-  document.addEventListener('visibilitychange', () => { if (document.hidden && 'speechSynthesis' in window) speechSynthesis.cancel(); });
-})();
-</script>
+<script src="./vendor/three.min.js"></script>
+<script src="./firebase-config.js" onerror="void 0"></script>
+<script src="./game.js"></script>
 </body>
 </html>
