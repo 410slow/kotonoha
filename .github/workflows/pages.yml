@@ -4,7 +4,7 @@ name: Deploy engma game to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/nice-noether-slrlbi]
     paths: ['game/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
