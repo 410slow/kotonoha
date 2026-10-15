@@ -161,6 +161,7 @@
   const voiceFiles = { hit: './voice/engma.mp3', catch: './voice/engma_catch.mp3' };
   const voiceClips = {};
   async function probeVoice(kind) {
+    if (EMBED) { const d = EMBED[voiceFiles[kind].replace('./', '')]; if (d) { const a = new Audio(d); a.preload = 'auto'; voiceClips[kind] = a; } return; }
     try { const r = await fetch(voiceFiles[kind], { method: 'HEAD' }); const ct = r.headers.get('content-type') || '';
       if (r.ok && ct.startsWith('audio')) { const a = new Audio(voiceFiles[kind]); a.preload = 'auto'; voiceClips[kind] = a; } } catch (_) {}
   }
@@ -184,6 +185,11 @@
       u.lang = 'ko-KR'; if (koVoice) u.voice = koVoice; u.pitch = 2; u.rate = kind === 'catch' ? 1.25 : 1.1; speechSynthesis.speak(u);
     } catch (_) {}
   }
+
+  // ======================= 에셋 (단일 파일 빌드면 data URI) =======================
+  const EMBED = window.ENGMA_ASSETS || null;
+  function assetUrl(path) { return (EMBED && EMBED[path]) || ('./' + path); }
+  async function assetJson(path) { if (EMBED && EMBED[path]) return EMBED[path]; const r = await fetch('./' + path); if (!r.ok) return null; return r.json(); }
 
   // ======================= 절차적 텍스처 =======================
   function makeTex(w, h, draw, repeatX = 1, repeatY = 1) {
@@ -448,9 +454,9 @@
   const RIG_HEIGHT = 1.82;
   async function loadRig() {
     try {
-      const r = await fetch('./assets/rig.json'); if (!r.ok) return null; const man = await r.json();
+      const man = await assetJson('assets/rig.json'); if (!man) return null;
       const loader = new THREE.TextureLoader();
-      const texes = await Promise.all(man.parts.map(pt => new Promise((res) => loader.load('./assets/' + pt.file, (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; res(t); }, undefined, () => res(null)))));
+      const texes = await Promise.all(man.parts.map(pt => new Promise((res) => loader.load(assetUrl('assets/' + pt.file), (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; res(t); }, undefined, () => res(null)))));
       if (texes.some(t => !t)) return null;
       const s = RIG_HEIGHT / man.srcH; const root = new THREE.Group(); const parts = {};
       const order = { shinL: 0, shinR: 0, thighL: 1, thighR: 1, torso: 2, armL: 3, armR: 3, head: 4 };
@@ -472,9 +478,9 @@
   }
   async function loadWalk() { // assets/walk/walk.json 이 있으면 실제 걷는 영상 프레임을 쓴다
     try {
-      const r = await fetch('./assets/walk/walk.json'); if (!r.ok) return null; const man = await r.json();
+      const man = await assetJson('assets/walk/walk.json'); if (!man) return null;
       const loader = new THREE.TextureLoader();
-      const texes = await Promise.all(man.frames.map(f => new Promise((res) => loader.load('./assets/walk/' + f, (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; res(t); }, undefined, () => res(null)))));
+      const texes = await Promise.all(man.frames.map(f => new Promise((res) => loader.load(assetUrl('assets/walk/' + f), (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; res(t); }, undefined, () => res(null)))));
       if (!texes.length || texes.some(t => !t)) return null;
       return { texes, fps: man.fps || 12, height: man.height || RIG_HEIGHT, t: 0 };
     } catch (e) { return null; }
@@ -930,7 +936,7 @@
   // ======================= 초기화 =======================
   function loadTextures() {
     const loader = new THREE.TextureLoader(); const names = { idle: 'friend_idle', phone: 'friend_phone', look: 'friend_look', hit: 'friend_hit', taunt: 'friend_taunt', chase0: 'friend_chase0', chase1: 'friend_chase1' };
-    return Promise.all(Object.entries(names).map(([k, f]) => new Promise((res) => loader.load(`./assets/${f}.png`, (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; friend.tex[k] = t; res(); }, undefined, () => { console.warn('texture missing', f); res(); }))));
+    return Promise.all(Object.entries(names).map(([k, f]) => new Promise((res) => loader.load(assetUrl(`assets/${f}.png`), (t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; friend.tex[k] = t; res(); }, undefined, () => { console.warn('texture missing', f); res(); }))));
   }
   async function init() {
     const loading = $('#loading');
