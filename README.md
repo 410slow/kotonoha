@@ -46,8 +46,8 @@ npm run dev
 게임은 `game/` 폴더 하나로 완결된 정적 페이지라서 아무 https 호스팅에나 올리면 됩니다. 두 가지 방법을 준비해 두었습니다.
 
 1. **GitHub Pages** (`.github/workflows/pages.yml`)
-   - 저장소 **Settings → Pages → Source** 를 `GitHub Actions` 로 설정합니다.
-   - `main` 에 머지하거나 Actions 탭에서 워크플로를 수동 실행(Run workflow)하면
+   - 저장소가 **공개(public)** 이면 추가 설정 없이 동작합니다.
+   - `game/` 이 바뀌어 푸시되면 워크플로가 `gh-pages` 브랜치로 내보내고, 깃허브가 그 브랜치를 자동 공개합니다. 주소는
      **https://410slow.github.io/kotonoha/** 주소가 생깁니다. 이 링크를 카톡방에 올리면 끝.
    - 주의: 무료 계정은 **공개(public) 저장소**에서만 Pages 가 동작합니다. 비공개로 두려면 아래 2번을 쓰세요.
 2. **Firebase Hosting** (`firebase.json`, 이미 쓰는 Firebase 프로젝트 재사용)

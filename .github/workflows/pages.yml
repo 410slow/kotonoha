@@ -1,5 +1,5 @@
-# game/ 폴더를 GitHub Pages 로 배포 → https://410slow.github.io/kotonoha/
-# (저장소 Settings → Pages → Source 를 "GitHub Actions" 로 한 번만 설정하면 됩니다)
+# game/ 폴더를 gh-pages 브랜치로 내보내면 GitHub Pages 가 자동으로 공개합니다
+# → https://410slow.github.io/kotonoha/
 name: Deploy engma game to GitHub Pages
 
 on:
@@ -9,9 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -20,16 +18,16 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - name: Prepare site
+        run: |
+          rm -rf game/tools game/firebase-config.example.js
+          touch game/.nojekyll
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: game
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./game
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: "Deploy 균승이 개패기 to GitHub Pages"
