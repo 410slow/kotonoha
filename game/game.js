@@ -786,7 +786,10 @@
     G.state = 'play'; G.hit = false; G.startT = now(); G.hitT = 0; noiseLevel = 0;
     spawnTrash(); friendGoto('eat'); vignette.classList.remove('danger');
     timerSub.textContent = '균승이 방으로 (살금 켜짐)'; setStatus('살금살금… 🤫');
-    if (document.pointerLockElement !== canvas && !('ontouchstart' in window)) { try { canvas.requestPointerLock(); } catch (_) {} }
+    try { canvas.focus(); } catch (_) {}
+    const touch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    $('#lookHint').textContent = touch ? '오른쪽 화면 드래그 = 둘러보기' : '화면 클릭 후 WASD 이동 · 마우스 드래그(또는 클릭 잠금)로 둘러보기';
+    if (!touch) { joy.style.display = 'none'; }
   }
 
   // ======================= 기록 =======================
@@ -832,6 +835,7 @@
     updateKeys();
   });
   window.addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'Space') { P.run = false; btnRun.classList.remove('down'); } updateKeys(); });
+  window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; P.run = false; btnRun.classList.remove('down'); updateKeys(); });
   function updateKeys() { input.f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0); input.s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0); }
   function toggleSneak() { P.sneak = !P.sneak; btnSneak.classList.toggle('on', P.sneak); say(P.sneak ? '🤫 살금살금' : '🚶 보통 걸음', 600); }
   btnSneak.addEventListener('click', (e) => { e.preventDefault(); toggleSneak(); });
@@ -852,15 +856,21 @@
   // 둘러보기 (캔버스 드래그 / 마우스)
   let lookId = null, lastLX = 0, lastLY = 0, lookMoved = 0;
   canvas.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse') { if (document.pointerLockElement !== canvas) { try { canvas.requestPointerLock(); } catch (_) {} } else punch(); return; }
-    if (lookId !== null) return; lookId = e.pointerId; lastLX = e.clientX; lastLY = e.clientY; lookMoved = 0; canvas.setPointerCapture(e.pointerId);
+    try { canvas.focus(); } catch (_) {}
+    if (e.pointerType === 'mouse') {
+      if (document.pointerLockElement === canvas) { punch(); return; }
+      // 잠금을 시도하되, 안 되는 환경(iframe 등)에서는 드래그로 둘러본다
+      try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (_) {}
+    }
+    if (lookId !== null) return; lookId = e.pointerId; lastLX = e.clientX; lastLY = e.clientY; lookMoved = 0; try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== lookId) return;
+    if (e.pointerId !== lookId || document.pointerLockElement === canvas) return;
     const dx = e.clientX - lastLX, dy = e.clientY - lastLY; lastLX = e.clientX; lastLY = e.clientY; lookMoved += Math.abs(dx) + Math.abs(dy);
-    P.yaw -= dx * 0.0045; P.pitch = Math.max(-1.1, Math.min(1.1, P.pitch - dy * 0.0035));
+    const k = e.pointerType === 'mouse' ? 0.0035 : 0.0045;
+    P.yaw -= dx * k; P.pitch = Math.max(-1.1, Math.min(1.1, P.pitch - dy * k * 0.8));
   });
-  const endLook = (e) => { if (e.pointerId === lookId) { lookId = null; if (lookMoved < 8 && canHit()) punch(); } };
+  const endLook = (e) => { if (e.pointerId === lookId) { lookId = null; if (lookMoved < 8 && canHit() && document.pointerLockElement !== canvas) punch(); } };
   canvas.addEventListener('pointerup', endLook); canvas.addEventListener('pointercancel', endLook);
   let lockFresh = false;
   document.addEventListener('pointerlockchange', () => { lockFresh = document.pointerLockElement === canvas; });
@@ -892,10 +902,12 @@
   }
 
   // ======================= 루프 =======================
-  let last = 0, frame = 0;
+  let last = 0, frame = 0, slowFrames = 0, lowQuality = false;
   function loop(ts) {
     requestAnimationFrame(loop);
-    const dt = Math.min(0.05, (ts - last) / 1000 || 0); last = ts; frame++;
+    const raw = (ts - last) / 1000 || 0; const dt = Math.min(0.1, raw); last = ts; frame++;
+    // 느린 기기 자동 품질 낮춤: 평균 프레임이 50ms 넘게 걸리면 그림자 끄고 해상도 낮춤
+    if (!lowQuality) { slowFrames = raw > 0.05 ? slowFrames + 1 : Math.max(0, slowFrames - 2); if (slowFrames > 45) { lowQuality = true; renderer.setPixelRatio(1); renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = false; scene.traverse(o => { if (o.isLight) o.castShadow = false; }); console.info('low quality mode'); } }
     if (G.state === 'play') {
       movePlayer(dt); checkTrash(); updateFriend(dt);
       if (G.hit && Math.hypot(P.x - WORLD.start.x, P.z - WORLD.start.z) < 0.9) escaped();
@@ -924,7 +936,8 @@
     const loading = $('#loading');
     if (!window.THREE) { loading.textContent = '3D 엔진을 불러오지 못했습니다 (vendor/three.min.js).'; return; }
     loading.textContent = '집 짓는 중…';
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' }); }
+    catch (e) { loading.textContent = '이 브라우저에서 3D(WebGL)를 켤 수 없습니다. 크롬/사파리 최신 버전으로 열어 주세요.'; console.error(e); return; }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
     camera = new THREE.PerspectiveCamera(72, 1, 0.05, 60);
