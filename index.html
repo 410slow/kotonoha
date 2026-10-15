@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <title>균승이 개패기</title>
+  <style>
+    /* 레이아웃: 전체 화면 3D 캔버스 위에 HUD(상단 타이머·상태), 소음/체력 미터, 하단 조작(조이스틱+버튼), 오버레이(시작/결과/기록).
+       단일 다크 테마(밤의 집). */
+    :root {
+      --bg: #06070a; --fg: #f4f1ea; --accent: #ffd33d; --danger: #ff3b3b; --ok: #4ade80; --panel: rgba(8,9,12,.55);
+      --font-ui: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); touch-action: none; user-select: none; -webkit-user-select: none; }
+    #stage { position: fixed; inset: 0; overflow: hidden; background: var(--bg); }
+    #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #stage.shake #gl { animation: shake .35s linear 1; }
+    @keyframes shake { 0%,100% { transform: translate(0,0);} 20% { transform: translate(-12px,6px);} 40% { transform: translate(10px,-8px);} 60% { transform: translate(-8px,4px);} 80% { transform: translate(6px,-3px);} }
+    #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: var(--danger); transition: opacity .12s; }
+    #vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.55) 100%); }
+    #vignette.danger { background: radial-gradient(ellipse at center, transparent 40%, rgba(180,0,0,.45) 100%); animation: pulse .6s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .55; } }
+
+    /* 주먹 */
+    #fist { position: absolute; right: -40px; bottom: -60px; font-size: 170px; pointer-events: none; transform: rotate(-20deg); filter: drop-shadow(0 10px 10px rgba(0,0,0,.6)); }
+    #fist.punch { animation: punch .3s cubic-bezier(.2,1.2,.4,1) 1; }
+    @keyframes punch { 0% { transform: rotate(-20deg) translate(0,0) scale(1);} 40% { transform: rotate(-35deg) translate(-45vw,-40vh) scale(1.3);} 100% { transform: rotate(-20deg) translate(0,0) scale(1);} }
+    #stage.walk #fist { animation: bob .55s ease-in-out infinite; }
+    #stage.run #fist { animation: bob .3s ease-in-out infinite; }
+    @keyframes bob { 0%,100% { transform: rotate(-20deg) translateY(0);} 50% { transform: rotate(-22deg) translateY(-10px);} }
+    #crosshair { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,.7); pointer-events: none; box-shadow: 0 0 4px #000; }
+
+    /* HUD */
+    #hud { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; pointer-events: none;
+      padding-block: calc(env(safe-area-inset-top, 0px) + 10px) 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); text-shadow: 0 2px 4px rgba(0,0,0,.8); }
+    .pill { background: var(--panel); backdrop-filter: blur(6px); border-radius: 14px; padding: 8px 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #timer { font-size: 28px; line-height: 1; }
+    #timer small { display: block; font-size: 12px; opacity: .8; font-weight: 500; margin-top: 4px; }
+    #friendState { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    #friendState b { font-size: 22px; }
+    #topRight { display: flex; gap: 8px; pointer-events: auto; }
+    .icon { background: var(--panel); border: 0; color: var(--fg); border-radius: 12px; width: 42px; height: 42px; font-size: 20px; cursor: pointer; }
+    .icon:focus-visible, .btn:focus-visible, .bigbtn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    #status { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 76px); transform: translateX(-50%); font-size: 20px; font-weight: 800; text-align: center;
+      pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.95); white-space: nowrap; max-width: 95vw; }
+    #status.alert { color: var(--danger); animation: blink .3s steps(2) infinite; }
+    #status.good { color: var(--accent); }
+    @keyframes blink { to { visibility: hidden; } }
+    #bubble { position: absolute; left: 50%; top: 32%; transform: translate(-50%,-50%) scale(0); background: #fff; color: #111; font-weight: 900; font-size: 34px; padding: 12px 22px; border-radius: 24px;
+      white-space: nowrap; transition: transform .18s cubic-bezier(.2,1.6,.4,1); box-shadow: 0 6px 16px rgba(0,0,0,.5); pointer-events: none; }
+    #bubble.on { transform: translate(-50%,-50%) scale(1); }
+    #bubble.big { font-size: 48px; color: var(--danger); }
+
+    #meters { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 124px); pointer-events: none;
+      padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .meter { height: 10px; border-radius: 6px; background: rgba(0,0,0,.55); overflow: hidden; margin-top: 4px; }
+    .meter > i { display: block; height: 100%; width: 0%; border-radius: 6px; transition: width .1s linear; }
+    #noiseBar > i { background: linear-gradient(90deg, var(--ok), var(--accent), var(--danger)); }
+    #stamBar > i { background: linear-gradient(90deg, #60a5fa, #a78bfa); }
+    .meterLabel { font-size: 12px; font-weight: 700; opacity: .9; text-shadow: 0 1px 3px #000; display: flex; justify-content: space-between; margin-top: 6px; }
+
+    /* 조작 */
+    #controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 10px; align-items: flex-end;
+      padding-block: 0 calc(env(safe-area-inset-bottom, 0px) + 14px); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    #joy { width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.10); border: 2px solid rgba(255,255,255,.25); position: relative; flex: none; touch-action: none; }
+    #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(255,255,255,.55); box-shadow: 0 4px 10px rgba(0,0,0,.4); }
+    #joy small { position: absolute; left: 0; right: 0; bottom: -18px; text-align: center; font-size: 11px; opacity: .7; }
+    #btns { flex: 1; min-width: 0; display: flex; gap: 10px; justify-content: flex-end; }
+    .btn { height: 76px; min-width: 96px; padding: 0 14px; border-radius: 20px; border: 0; font-size: 18px; font-weight: 900; color: #111; background: #fff; box-shadow: 0 6px 0 rgba(0,0,0,.4);
+      cursor: pointer; transition: transform .05s, box-shadow .05s; touch-action: none; font-family: inherit; }
+    .btn small { display: block; font-size: 11px; font-weight: 600; opacity: .65; margin-top: 2px; }
+    .btn:active, .btn.down { transform: translateY(5px); box-shadow: 0 1px 0 rgba(0,0,0,.4); }
+    #btnSneak { background: linear-gradient(180deg, #e6f5ff, #9ccfff); }
+    #btnSneak.on { background: linear-gradient(180deg, #fff6c4, var(--accent)); }
+    #btnRun { background: linear-gradient(180deg, #ffd0d0, #ff7a7a); }
+    #btnHit { background: linear-gradient(180deg, #fff2b8, #ffb340); font-size: 22px; }
+    #btnHit[hidden] { display: none !important; }
+    #lookHint { position: absolute; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 230px); font-size: 12px; opacity: .55; pointer-events: none; text-shadow: 0 1px 3px #000; }
+
+    /* 오버레이 */
+    .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; overflow-y: auto;
+      background: rgba(4,5,8,.82); backdrop-filter: blur(10px); text-align: center;
+      padding-block: calc(env(safe-area-inset-top, 0px) + 20px) calc(env(safe-area-inset-bottom, 0px) + 20px); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .overlay h1 { font-size: 44px; margin: 0 0 4px; letter-spacing: -1.5px; text-wrap: balance; line-height: 1.1; }
+    .overlay h1 span { color: var(--accent); }
+    .overlay p { max-width: 440px; line-height: 1.6; opacity: .92; margin: 6px 0; font-size: 15px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+    .seg { display: inline-flex; background: rgba(255,255,255,.08); border-radius: 14px; padding: 4px; gap: 4px; }
+    .seg button { border: 0; background: transparent; color: var(--fg); font: inherit; font-weight: 700; padding: 10px 16px; border-radius: 11px; cursor: pointer; }
+    .seg button.on { background: var(--accent); color: #111; }
+    input[type=text] { font: inherit; font-weight: 700; font-size: 18px; padding: 12px 14px; border-radius: 12px; border: 2px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: var(--fg); width: 220px; text-align: center; }
+    input[type=text]:focus { outline: 0; border-color: var(--accent); }
+    .bigbtn { margin-top: 16px; padding: 18px 46px; font-size: 24px; font-weight: 900; border-radius: 999px; border: 0; background: var(--accent); color: #111; cursor: pointer; box-shadow: 0 8px 0 #b48f00; font-family: inherit; }
+    .bigbtn:active { transform: translateY(6px); box-shadow: 0 2px 0 #b48f00; }
+    .bigbtn.secondary { background: rgba(255,255,255,.14); color: var(--fg); box-shadow: 0 8px 0 rgba(0,0,0,.5); font-size: 18px; padding: 14px 30px; }
+    .sub { margin-top: 12px; font-size: 13px; opacity: .7; }
+    kbd { background: #222; border: 1px solid #555; border-radius: 6px; padding: 1px 6px; font-size: 12px; }
+    #previewFace { width: 150px; height: 190px; object-fit: cover; object-position: 50% 15%; border-radius: 50% / 48%; filter: drop-shadow(0 10px 14px rgba(0,0,0,.6)); animation: breathe 3s ease-in-out infinite; }
+    @keyframes breathe { 0%,100% { transform: translateY(0) rotate(-1deg);} 50% { transform: translateY(-5px) rotate(1.2deg);} }
+    #loading { font-size: 13px; opacity: .7; margin-top: 10px; min-height: 18px; }
+    #result { font-size: 64px; font-weight: 900; color: var(--accent); margin: 4px 0; font-variant-numeric: tabular-nums; letter-spacing: -2px; }
+    #resultSub { font-size: 15px; opacity: .85; }
+    table { border-collapse: collapse; margin-top: 12px; width: min(440px, 100%); font-variant-numeric: tabular-nums; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.12); font-size: 14px; }
+    th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; font-weight: 700; }
+    td.num { text-align: right; }
+    tr.me td { color: var(--accent); font-weight: 800; }
+    .tableWrap { width: min(440px, 100%); overflow-x: auto; max-height: 36vh; overflow-y: auto; }
+    #overFace { width: 150px; height: 190px; object-fit: cover; object-position: 50% 15%; border-radius: 50% / 48%; }
+    .minimapWrap { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 120px); pointer-events: none; opacity: .85; }
+    #minimap { width: 96px; height: 66px; border-radius: 8px; background: rgba(0,0,0,.45); }
+    @media (max-width: 420px) { .overlay h1 { font-size: 36px; } #timer { font-size: 22px; } .btn { min-width: 80px; height: 70px; font-size: 16px; } }
+    @media (prefers-reduced-motion: reduce) { #stage.walk #fist, #stage.run #fist, #vignette.danger { animation: none; } }
+  </style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl" tabindex="0" style="outline:none"></canvas>
+  <div id="vignette"></div>
+  <div id="flash"></div>
+  <div id="crosshair"></div>
+  <div id="fist">👊</div>
+  <div id="bubble"></div>
+
+  <div id="hud">
+    <div class="pill" id="timer">0.00<small id="timerSub">현관에서 출발</small></div>
+    <div class="pill" id="friendState"><b id="friendIcon">🍗</b><span id="friendText">밥 먹는 중</span></div>
+    <div id="topRight"><button class="icon" id="btnMute" title="소리" aria-label="소리 켜기/끄기">🔊</button></div>
+  </div>
+  <div id="status"></div>
+  <div class="minimapWrap"><canvas id="minimap" width="192" height="132"></canvas></div>
+
+  <div id="meters">
+    <div class="meterLabel"><span>소음</span><span id="noiseText">조용함</span></div>
+    <div class="meter" id="noiseBar"><i></i></div>
+    <div class="meterLabel"><span>체력</span><span id="stamText">100%</span></div>
+    <div class="meter" id="stamBar"><i></i></div>
+  </div>
+  <div id="lookHint">오른쪽 화면 드래그 = 둘러보기</div>
+
+  <div id="controls">
+    <div id="joy"><div id="knob"></div><small>이동</small></div>
+    <div id="btns">
+      <button class="btn" id="btnHit" hidden>👊 때리기<small>E</small></button>
+      <button class="btn" id="btnSneak">🤫 살금<small>켜짐/꺼짐 (Shift)</small></button>
+      <button class="btn" id="btnRun">🏃 달리기<small>꾹 (Space)</small></button>
+    </div>
+  </div>
+
+  <!-- 시작 화면 -->
+  <div class="overlay" id="startOverlay">
+    <img id="previewFace" src="./assets/friend_hit.png" alt="" />
+    <h1>균승이 <span>개패기</span></h1>
+    <p>균승이가 방에서 먹방을 찍고 있습니다. 현관에서 출발해 <b>소리 안 나게</b> 다가가서 한 대 때리고, <b>현관까지 돌아오면</b> 성공.<br/>
+      바닥의 치킨 박스·캔을 밟으면 소리가 납니다. 균승이가 <b>고개를 들 때(👀)</b> 움직이면 들킵니다.</p>
+    <div class="row">
+      <input type="text" id="playerName" maxlength="10" placeholder="아이디 (기록용)" autocomplete="off" />
+    </div>
+    <div class="row">
+      <div class="seg" id="diffSeg">
+        <button data-diff="easy">쉬움</button><button data-diff="normal" class="on">보통</button><button data-diff="hard">어려움</button>
+      </div>
+    </div>
+    <button class="bigbtn" id="btnStart">▶ 시작</button>
+    <div class="row"><button class="bigbtn secondary" id="btnRecords">🏆 기록 보기</button></div>
+    <div class="sub">폰: 왼쪽 조이스틱 이동, 오른쪽 드래그 둘러보기 · PC: <kbd>WASD</kbd> 이동, 마우스 둘러보기, <kbd>Shift</kbd> 살금, <kbd>Space</kbd> 달리기, <kbd>E</kbd>/클릭 때리기</div>
+    <div id="loading"></div>
+  </div>
+
+  <!-- 결과 화면 -->
+  <div class="overlay" id="overOverlay" hidden>
+    <img id="overFace" src="./assets/friend_taunt.png" alt="" />
+    <h1 id="overTitle">엥마~ <span>잡혔다</span></h1>
+    <div id="result">0.00</div>
+    <div id="resultSub"></div>
+    <div class="tableWrap"><table id="recordTable"><thead><tr><th>#</th><th>아이디</th><th>난이도</th><th class="num">기록</th></tr></thead><tbody></tbody></table></div>
+    <div class="row">
+      <button class="bigbtn" id="btnRetry">다시 하기</button>
+      <button class="bigbtn secondary" id="btnHome">처음으로</button>
+    </div>
+  </div>
+
+  <!-- 기록 화면 -->
+  <div class="overlay" id="recordsOverlay" hidden>
+    <h1>🏆 <span>기록</span></h1>
+    <p id="recordsNote">성공한 판만 기록됩니다. 기록은 이 기기에 저장됩니다.</p>
+    <div class="tableWrap"><table id="recordTable2"><thead><tr><th>#</th><th>아이디</th><th>난이도</th><th class="num">기록</th></tr></thead><tbody></tbody></table></div>
+    <div class="row"><button class="bigbtn secondary" id="btnRecordsClose">닫기</button></div>
+  </div>
+</div>
+
+<script src="./vendor/three.min.js"></script>
+<script src="./firebase-config.js" onerror="void 0"></script>
+<script src="./game.js"></script>
+</body>
+</html>
